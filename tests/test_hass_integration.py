@@ -269,7 +269,7 @@ async def test_entry_unique_id_migration(mock_bluetooth) -> None:
     }
 
     setup_ok = await sesame_ble.async_setup_entry(hass, entry)
-    assert setup_ok is True
+    assert setup_ok is False
 
     # Assert that async_update_entry was called to set the unique_id
     hass.config_entries.async_update_entry.assert_called_once_with(

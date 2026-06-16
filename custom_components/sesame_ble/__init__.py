@@ -111,6 +111,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if not entry.unique_id:
         hass.config_entries.async_update_entry(entry, unique_id=dr.format_mac(mac_address))
+        return False
 
     # Retrieve the BLEDevice from Home Assistant's bluetooth manager
     ble_device = bluetooth.async_ble_device_from_address(hass, mac_address, connectable=True)
