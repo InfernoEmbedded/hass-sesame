@@ -1,0 +1,70 @@
+add_passcode:
+  name: Add Passcode
+  description: Adds a new passcode (PIN code) to the Sesame Touch keypad.
+  fields:
+    device_id:
+      name: Device
+      description: The Sesame Touch device to add the passcode to.
+      required: true
+      selector:
+        device:
+          integration: sesame_ble
+    passcode:
+      name: Passcode PIN
+      description: The passcode digits (between 4 and 16 digits, containing only numbers 0-9).
+      required: true
+      example: "123456"
+      selector:
+        text:
+    name:
+      name: Name / Nickname
+      description: The nickname to identify this passcode (maximum 20 characters).
+      required: true
+      example: "Family Member"
+      selector:
+        text:
+
+delete_passcode:
+  name: Delete Passcode
+  description: Deletes an existing passcode (PIN code) from the Sesame Touch keypad.
+  fields:
+    device_id:
+      name: Device
+      description: The Sesame Touch device to delete the passcode from.
+      required: true
+      selector:
+        device:
+          integration: sesame_ble
+    passcode_or_id:
+      name: Passcode PIN or Hex ID
+      description: The passcode digits (e.g. "123456") or the unique hex ID of the passcode to delete (e.g. "010203040506").
+      required: true
+      example: "123456"
+      selector:
+        text:
+
+update_passcode:
+  name: Update Passcode Name
+  description: Updates the nickname of an existing passcode on the Sesame Touch keypad.
+  fields:
+    device_id:
+      name: Device
+      description: The Sesame Touch device to update the passcode nickname for.
+      required: true
+      selector:
+        device:
+          integration: sesame_ble
+    passcode_or_id:
+      name: Passcode PIN or Hex ID
+      description: The passcode digits or the unique hex ID of the passcode to update.
+      required: true
+      example: "123456"
+      selector:
+        text:
+    name:
+      name: New Name
+      description: The new nickname for the passcode (maximum 20 characters).
+      required: true
+      example: "New Nickname"
+      selector:
+        text:

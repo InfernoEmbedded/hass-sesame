@@ -1,0 +1,42 @@
+{
+  "config": {
+    "flow_title": "Candy House Sesame BLE",
+    "step": {
+      "user": {
+        "title": "Configurer Sesame BLE",
+        "description": "Saisissez les informations d'identification de votre serrure ou clavier Sesame. Vous pouvez coller une URL de code QR partagée (ssm://) depuis l'application officielle pour remplir automatiquement les détails, ou configurer manuellement.",
+        "data": {
+          "qr_code_image": "Téléversement de l'image du code QR",
+          "qr_url": "URL de configuration du code QR",
+          "mac_address": "Adresse MAC Bluetooth",
+          "secret_key": "Clé secrète (16 octets/32 caractères hexadécimaux)",
+          "model": "Modèle de produit"
+        }
+      },
+      "select_address": {
+        "title": "Sélectionner l'appareil",
+        "description": "Sélectionnez l'adresse Bluetooth de votre appareil Sesame.",
+        "data": {
+          "mac_address": "Adresse MAC Bluetooth"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Confirmer la découverte",
+        "description": "Voulez-vous configurer l'appareil Sesame découvert ? Veuillez saisir sa clé secrète.",
+        "data": {
+          "secret_key": "Clé secrète"
+        }
+      }
+    },
+    "error": {
+      "invalid_qr_code": "Échec de l'analyse de l'URL du code QR. Assurez-vous qu'il s'agit d'une URL ssm:// valide.",
+      "invalid_secret_key": "Format de clé secrète invalide. Elle doit comporter exactement 32 caractères hexadécimaux.",
+      "no_devices_found": "Aucun appareil Sesame trouvé à proximité. Assurez-vous qu'il est allumé et à portée."
+    },
+    "abort": {
+      "already_configured": "L'appareil est déjà configuré",
+      "not_sesame": "L'appareil découvert n'est pas un appareil Sesame pris en charge",
+      "invalid_mfg_data": "Données de fabricant non valides reçues de l'appareil"
+    }
+  }
+}

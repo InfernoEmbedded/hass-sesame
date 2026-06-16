@@ -1,0 +1,42 @@
+{
+  "config": {
+    "flow_title": "Candy House Sesame BLE",
+    "step": {
+      "user": {
+        "title": "Configure Sesame BLE",
+        "description": "Enter the credentials for your Sesame lock or keypad. You can paste a shared QR Code URL (ssm://) from the official app to auto-populate the details, or configure manually.",
+        "data": {
+          "qr_code_image": "QR Code Image Upload",
+          "qr_url": "QR Code Setup URL",
+          "mac_address": "Bluetooth MAC Address",
+          "secret_key": "Secret Key (16 bytes/32 hex characters)",
+          "model": "Product Model"
+        }
+      },
+      "select_address": {
+        "title": "Select Device",
+        "description": "Select the Bluetooth address of your Sesame device.",
+        "data": {
+          "mac_address": "Bluetooth MAC Address"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Confirm Discovery",
+        "description": "Do you want to set up the discovered Sesame device? Please enter its Secret Key.",
+        "data": {
+          "secret_key": "Secret Key"
+        }
+      }
+    },
+    "error": {
+      "invalid_qr_code": "Failed to parse QR code URL. Make sure it is a valid ssm:// URL.",
+      "invalid_secret_key": "Invalid Secret Key format. It must be exactly 32 hex characters.",
+      "no_devices_found": "No Sesame devices found nearby. Ensure it is powered on and in range."
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "not_sesame": "Discovered device is not a supported Sesame device",
+      "invalid_mfg_data": "Invalid manufacturer data received from device"
+    }
+  }
+}

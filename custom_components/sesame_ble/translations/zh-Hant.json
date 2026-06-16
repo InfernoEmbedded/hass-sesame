@@ -1,0 +1,42 @@
+{
+  "config": {
+    "flow_title": "Candy House Sesame BLE",
+    "step": {
+      "user": {
+        "title": "設定 Sesame BLE",
+        "description": "輸入您的 Sesame 門鎖或鑰匙盒的憑據。您可以貼上官方 App 分享的 QR Code 網址（ssm://）以自動填入詳細資訊，或是手動進行設定。",
+        "data": {
+          "qr_code_image": "QR Code 圖片上傳",
+          "qr_url": "QR Code 設定網址",
+          "mac_address": "藍牙 MAC 位址",
+          "secret_key": "金鑰（16 位元組 / 32 位十六進制字元）",
+          "model": "產品型號"
+        }
+      },
+      "select_address": {
+        "title": "選擇裝置",
+        "description": "選擇您的 Sesame 裝置的藍牙位址。",
+        "data": {
+          "mac_address": "藍牙 MAC 位址"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "確認探索",
+        "description": "您要設定探索到的 Sesame 裝置嗎？請輸入其金鑰。",
+        "data": {
+          "secret_key": "金鑰"
+        }
+      }
+    },
+    "error": {
+      "invalid_qr_code": "解析 QR Code 網址失敗。請確保其為有效的 ssm:// 網址。",
+      "invalid_secret_key": "金鑰格式無效。必須剛好是 32 個十六進制字元。",
+      "no_devices_found": "附近未找到 Sesame 裝置。請確保裝置已開啟電源且在範圍內。"
+    },
+    "abort": {
+      "already_configured": "裝置已設定完成",
+      "not_sesame": "探索到的裝置不是支援的 Sesame 裝置",
+      "invalid_mfg_data": "從裝置接收到無效的製造商數據"
+    }
+  }
+}
