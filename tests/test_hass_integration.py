@@ -240,6 +240,43 @@ async def test_touch_2_pro_setup_and_entities(mock_bluetooth) -> None:
     assert pw_sensor.unique_id == "test_mac_touch_2_pro_registered_passcodes"
 
 
+@pytest.mark.asyncio
+@patch("sesame_ble.bluetooth")
+async def test_entry_unique_id_migration(mock_bluetooth) -> None:
+    """Tests that a config entry with no unique ID is automatically migrated during setup."""
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+    hass.config_entries.async_update_entry = MagicMock()
+
+    # Mock bluetooth discovery
+    mock_ble_device = MagicMock()
+    mock_ble_device.address = "AA:BB:CC:DD:EE:FF"
+    mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+
+    mfg_data = struct.pack("<HB16s", 5, 1, TEST_UUID.bytes)
+    mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+
+    # Mock config entry with None unique_id
+    entry = MagicMock()
+    entry.entry_id = "test_entry_migration"
+    entry.unique_id = None
+    entry.data = {
+        "mac_address": "AA:BB:CC:DD:EE:FF",
+        CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+        CONF_MODEL: "SESAME5",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    setup_ok = await sesame_ble.async_setup_entry(hass, entry)
+    assert setup_ok is True
+
+    # Assert that async_update_entry was called to set the unique_id
+    hass.config_entries.async_update_entry.assert_called_once_with(
+        entry, unique_id="AA:BB:CC:DD:EE:FF"
+    )
+
+
 class MockAdvertisementData:
     """Helper to mock advertisement data payload."""
     def __init__(self, mfg_data: bytes) -> None:

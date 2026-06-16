@@ -84,6 +84,8 @@ async def test_flow_qr_code_with_discovered_mac(mock_discovered) -> None:
     flow = SesameBLEConfigFlow()
     flow.hass = MagicMock()
     flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
 
     # Generate a valid QR URL for model 5 (SESAME5)
     secret_key = bytes(range(16))
@@ -107,6 +109,8 @@ async def test_flow_qr_code_with_discovered_mac(mock_discovered) -> None:
     result = await flow.async_step_user(user_input=user_input)
 
     assert result == "entry_created"
+    flow.async_set_unique_id.assert_called_once_with(format_mac("AA:BB:CC:DD:EE:FF"))
+    flow._abort_if_unique_id_configured.assert_called_once()
     flow.async_create_entry.assert_called_once_with(
         title="My Lock",
         data={
@@ -218,6 +222,8 @@ async def test_flow_qr_image_success(mock_decode, mock_image_open, mock_discover
     flow.hass.async_add_executor_job = mock_async_add_executor_job
 
     flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
 
     # Generate a valid QR URL for model 5 (SESAME5)
     secret_key = bytes(range(16))
@@ -246,6 +252,8 @@ async def test_flow_qr_image_success(mock_decode, mock_image_open, mock_discover
     result = await flow.async_step_user(user_input=user_input)
 
     assert result == "entry_created"
+    flow.async_set_unique_id.assert_called_once_with(format_mac("AA:BB:CC:DD:EE:FF"))
+    flow._abort_if_unique_id_configured.assert_called_once()
     flow.async_create_entry.assert_called_once_with(
         title="My Lock",
         data={

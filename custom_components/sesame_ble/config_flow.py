@@ -96,6 +96,9 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     
                     if found_info:
                         self._mac_address = found_info.address
+                        formatted_mac = format_mac(self._mac_address)
+                        await self.async_set_unique_id(formatted_mac)
+                        self._abort_if_unique_id_configured()
                         model_name = ProductModels(self._qr_code_info.model_id).name
                         return self.async_create_entry(
                             title=self._qr_code_info.device_name or f"Sesame {model_name}",
