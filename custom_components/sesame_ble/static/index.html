@@ -1016,15 +1016,15 @@
     // Event listener for Home Assistant object updates
     window.addEventListener("hass-changed", (event) => {
       syncTheme();
-      loadKeypads();
+      loadKeypads(false);
       populatePersonDropdowns();
     });
 
     document.addEventListener("DOMContentLoaded", () => {
       syncTheme();
       // Periodic refresh
-      setInterval(loadKeypads, 10000);
-      loadKeypads();
+      setInterval(() => loadKeypads(false), 10000);
+      loadKeypads(true);
       populatePersonDropdowns();
 
       // Form Submit
@@ -1043,19 +1043,30 @@
     });
 
     let allConfiguredLocks = [];
+    let lastFetchTime = 0;
+    let isFetchingKeypads = false;
 
-    async function loadKeypads() {
+    async function loadKeypads(force = false) {
+      if (isFetchingKeypads) return;
+
+      const now = Date.now();
+      if (!force && (now - lastFetchTime < 3000)) return;
+
       const hass = window.hass || window.parent.hass;
       if (!hass) return;
 
+      isFetchingKeypads = true;
       try {
         const response = await hass.fetchWithAuth("/api/sesame_ble/passcodes");
         const data = await response.json();
         activeKeypads = data.keypads || [];
         allConfiguredLocks = data.all_locks || [];
         updateDeviceSelect();
+        lastFetchTime = Date.now();
       } catch (err) {
         console.error("Error fetching keypad data:", err);
+      } finally {
+        isFetchingKeypads = false;
       }
     }
 
@@ -1464,9 +1475,9 @@
               <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Update Passcode
             `;
           }
-          await loadKeypads();
+          await loadKeypads(true);
         } else {
-          await loadKeypads();
+          await loadKeypads(true);
         }
       } catch (err) {
         console.error("Error saving passcode:", err);
@@ -1489,7 +1500,7 @@
             <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Update Passcode
           `;
         }
-        await loadKeypads();
+        await loadKeypads(true);
       }
     }
 
@@ -1547,7 +1558,7 @@
             uid
           })
         });
-        loadKeypads();
+        loadKeypads(true);
       } catch (err) {
         console.error("Error deleting passcode:", err);
       }
@@ -1593,7 +1604,7 @@
           alert(res.error);
         } else {
           closeRenameModal();
-          loadKeypads();
+          loadKeypads(true);
         }
       } catch (err) {
         console.error("Error renaming item:", err);
@@ -1614,7 +1625,7 @@
             uid
           })
         });
-        loadKeypads();
+        loadKeypads(true);
       } catch (err) {
         console.error("Error deleting card:", err);
       }
@@ -1633,7 +1644,7 @@
             uid
           })
         });
-        loadKeypads();
+        loadKeypads(true);
       } catch (err) {
         console.error("Error deleting fingerprint:", err);
       }
@@ -1732,7 +1743,7 @@
     function startCardRegPoll() {
       if (cardRegPollInterval) clearInterval(cardRegPollInterval);
       cardRegPollInterval = setInterval(async () => {
-        await loadKeypads();
+        await loadKeypads(true);
         const keypad = activeKeypads.find(k => k.entry_id === currentKeypadEntryId);
         if (keypad && keypad.scanned_card) {
           const card = keypad.scanned_card;
@@ -1801,7 +1812,7 @@
         } else {
           document.getElementById("card-reg-modal").style.display = "none";
           cardRegModalOpen = false;
-          loadKeypads();
+          loadKeypads(true);
         }
       } catch (err) {
         console.error("Error adding card:", err);
@@ -1848,7 +1859,7 @@
     function startFingerprintRegPoll() {
       if (fingerprintRegPollInterval) clearInterval(fingerprintRegPollInterval);
       fingerprintRegPollInterval = setInterval(async () => {
-        await loadKeypads();
+        await loadKeypads(true);
         const keypad = activeKeypads.find(k => k.entry_id === currentKeypadEntryId);
         if (keypad && keypad.scanned_fingerprint) {
           const finger = keypad.scanned_fingerprint;
@@ -1913,7 +1924,7 @@
           alert(res.error);
         } else {
           await cancelFingerprintRegistration();
-          loadKeypads();
+          loadKeypads(true);
         }
       } catch (err) {
         console.error("Error saving fingerprint:", err);
@@ -1967,7 +1978,7 @@
     function startPasscodeRegPoll() {
       if (passcodeRegPollInterval) clearInterval(passcodeRegPollInterval);
       passcodeRegPollInterval = setInterval(async () => {
-        await loadKeypads();
+        await loadKeypads(true);
         const keypad = activeKeypads.find(k => k.entry_id === currentKeypadEntryId);
         if (keypad && keypad.scanned_passcode) {
           const passcode = keypad.scanned_passcode;
@@ -2047,7 +2058,7 @@
           alert(res.error);
         } else {
           await cancelPasscodeRegistration();
-          loadKeypads();
+          loadKeypads(true);
         }
       } catch (err) {
         console.error("Error saving passcode:", err);
@@ -2076,7 +2087,7 @@
         if (res.error) {
           alert(res.error);
         } else {
-          loadKeypads();
+          loadKeypads(true);
         }
       } catch (err) {
         console.error("Error pairing lock:", err);
@@ -2100,7 +2111,7 @@
         if (res.error) {
           alert(res.error);
         } else {
-          loadKeypads();
+          loadKeypads(true);
         }
       } catch (err) {
         console.error("Error unpairing lock:", err);

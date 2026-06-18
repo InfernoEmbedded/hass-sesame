@@ -36,10 +36,13 @@ class SesamePasscodesView(HomeAssistantView):
             if entry_id == "views_registered":
                 continue
             if not hasattr(other_wrapper, "model_name") or "TOUCH" not in other_wrapper.model_name:
+                device_uuid = ""
+                if hasattr(other_wrapper, "adv_data") and other_wrapper.adv_data:
+                    device_uuid = str(other_wrapper.adv_data.device_uuid)
                 all_locks.append({
                     "entry_id": entry_id,
                     "name": other_wrapper.entry.title,
-                    "uuid": str(other_wrapper.adv_data.device_uuid),
+                    "uuid": device_uuid,
                 })
 
         keypads_list = []
@@ -101,7 +104,7 @@ class SesamePasscodesView(HomeAssistantView):
                     for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
                         if other_entry_id == "views_registered":
                             continue
-                        if str(other_wrapper.adv_data.device_uuid) == lock_uuid_str:
+                        if hasattr(other_wrapper, "adv_data") and other_wrapper.adv_data and str(other_wrapper.adv_data.device_uuid) == lock_uuid_str:
                             configured_name = other_wrapper.entry.title
                             configured_entry_id = other_entry_id
                             break
