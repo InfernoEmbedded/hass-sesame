@@ -193,14 +193,14 @@ def test_mech_status_parsing_compatibility() -> None:
     assert status_gomalock.is_stop is False
     assert status_gomalock.is_battery_critical is True
 
-    # 2. Sesame Touch Keypad Mech Status
-    # battery (uint16_t), cards (int16_t), fingerprints (int16_t), passwords (int16_t), flags (uint8_t)
+    # 2. Sesame Touch Keypad Mech Status - 7-byte layout
+    # battery (uint16_t), cards (int16_t), fingerprints (uint8_t), passwords (uint8_t), flags (uint8_t)
     # raw_battery = 2800 (5.6V), cards = 3, fingerprints = 12, passwords = 5, flags = 0x20 (IS_BATTERY_CRITICAL)
-    payload_touch = struct.pack("<HhhhB", 2800, 3, 12, 5, 0x20)
+    payload_touch_7 = struct.pack("<HhBBB", 2800, 3, 12, 5, 0x20)
 
     # Custom client parsing
     keypad = SesameKeypad(ble_device=None, ad_data=mock_ad)
-    keypad.on_published(const.ItemCodes.MECH_STATUS.value, payload_touch)
+    keypad.on_published(const.ItemCodes.MECH_STATUS.value, payload_touch_7)
 
     assert keypad.battery_voltage == 5.6
     assert keypad.battery_percentage == calculate_battery_percentage(5.6)
@@ -210,13 +210,38 @@ def test_mech_status_parsing_compatibility() -> None:
     assert keypad.is_battery_critical is True
 
     # Gomalock SesameTouchMechStatus parsing
-    touch_gomalock = sesametouch.SesameTouchMechStatus.from_payload(payload_touch)
+    touch_gomalock = sesametouch.SesameTouchMechStatus.from_payload(payload_touch_7)
     assert touch_gomalock.battery_voltage == 5.6
     assert touch_gomalock.battery_percentage == os3_protocol.calculate_battery_percentage(5.6)
     assert touch_gomalock.cards_number == 3
     assert touch_gomalock.fingerprints_number == 12
     assert touch_gomalock.passwords_number == 5
     assert touch_gomalock.is_battery_critical is True
+
+    # 3. Sesame Touch Keypad Mech Status - 9-byte layout
+    # battery (uint16_t), cards (int16_t), fingerprints (uint8_t), passwords (uint8_t), faces (uint8_t), palms (uint8_t), flags (uint8_t)
+    # raw_battery = 2800 (5.6V), cards = 3, fingerprints = 12, passwords = 5, faces = 0, palms = 0, flags = 0x20 (IS_BATTERY_CRITICAL)
+    payload_touch_9 = struct.pack("<HhBBBBB", 2800, 3, 12, 5, 0, 0, 0x20)
+
+    # Custom client parsing
+    keypad_9 = SesameKeypad(ble_device=None, ad_data=mock_ad)
+    keypad_9.on_published(const.ItemCodes.MECH_STATUS.value, payload_touch_9)
+
+    assert keypad_9.battery_voltage == 5.6
+    assert keypad_9.battery_percentage == calculate_battery_percentage(5.6)
+    assert keypad_9.cards_count == 3
+    assert keypad_9.fingerprints_count == 12
+    assert keypad_9.passcodes_count == 5
+    assert keypad_9.is_battery_critical is True
+
+    # Gomalock SesameTouchMechStatus parsing
+    touch_gomalock_9 = sesametouch.SesameTouchMechStatus.from_payload(payload_touch_9)
+    assert touch_gomalock_9.battery_voltage == 5.6
+    assert touch_gomalock_9.battery_percentage == os3_protocol.calculate_battery_percentage(5.6)
+    assert touch_gomalock_9.cards_number == 3
+    assert touch_gomalock_9.fingerprints_number == 12
+    assert touch_gomalock_9.passwords_number == 5
+    assert touch_gomalock_9.is_battery_critical is True
 
 
 def test_history_tag_compatibility() -> None:
@@ -280,5 +305,78 @@ def test_keypad_multiple_passcodes_parsing() -> None:
     assert keypad.passcodes[pin1.hex()]["code"] == "141584"
     assert keypad.passcodes[pin2.hex()]["name"] == "Test Code"
     assert keypad.passcodes[pin2.hex()]["code"] == "123456"
+
+
+def test_keypad_paired_locks_parsing() -> None:
+    """Verifies that SesameKeypad parses paired locks in both raw binary and base64 formats."""
+    from sesame_ble.sesame_client import SesameKeypad, SesameAdData
+    from uuid import UUID
+    import base64
+    
+    mock_ad = SesameAdData(model_id=26, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))
+    keypad = SesameKeypad(ble_device=None, ad_data=mock_ad)
+    
+    # 1. Raw binary UUID (16 bytes + 6 bytes null + 1 byte status)
+    uuid1 = UUID("11200509-0108-0802-b700-6500ffffffff")
+    slot1 = uuid1.bytes + b"\x00" * 6 + b"\x01"
+    
+    # 2. Base64-encoded UUID (22 bytes string + 1 byte status)
+    uuid2 = UUID("22222222-2222-2222-2222-222222222222")
+    b64_str = base64.b64encode(uuid2.bytes).rstrip(b"=")
+    assert len(b64_str) == 22
+    slot2 = b64_str + b"\x02"
+    
+    # 3. Empty slot
+    slot3 = b"\x00" * 23
+    
+    payload = slot1 + slot2 + slot3
+    assert len(payload) == 69
+    
+    keypad.on_published(102, payload) # ITEM_KEYPAD_LOCK_LIST
+    
+    assert len(keypad.paired_locks) == 2
+    assert keypad.paired_locks[0]["uuid"] == str(uuid1)
+    assert keypad.paired_locks[0]["status"] == 1
+    assert keypad.paired_locks[1]["uuid"] == str(uuid2)
+    assert keypad.paired_locks[1]["status"] == 2
+
+
+def test_keypad_scanned_card_fingerprint_during_sync() -> None:
+    """Verifies that newly scanned cards/fingerprints are captured even during a database sync if in registration mode."""
+    from sesame_ble.sesame_client import SesameKeypad, SesameAdData
+    from uuid import UUID
+    from unittest.mock import MagicMock
+    
+    mock_ad = SesameAdData(model_id=26, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))
+    keypad = SesameKeypad(ble_device=None, ad_data=mock_ad)
+    
+    # Enable card registration mode
+    keypad.card_registration_mode = True
+    keypad._sync_future = MagicMock()  # simulate active sync
+    
+    # Notify a new card
+    card_uid = b"\xaa\xbb\xcc\xdd"
+    # payload: item_type (1B) + id_len (1B) + id + name_len (1B) + name (0B)
+    payload_card = b"\x80" + bytes([len(card_uid)]) + card_uid + b"\x00"
+    
+    keypad.on_published(110, payload_card)  # ITEM_CARD_NOTIFY
+    
+    assert keypad.scanned_card is not None
+    assert keypad.scanned_card["uid"] == card_uid.hex()
+    
+    # Reset and test fingerprint registration mode
+    keypad.scanned_card = None
+    keypad.card_registration_mode = False
+    keypad.fingerprint_registration_mode = True
+    
+    finger_uid = b"\x11\x22\x33\x44"
+    payload_finger = b"\x01" + bytes([len(finger_uid)]) + finger_uid + b"\x00"
+    
+    keypad.on_published(118, payload_finger)  # ITEM_FINGER_NOTIFY
+    
+    assert keypad.scanned_fingerprint is not None
+    assert keypad.scanned_fingerprint["uid"] == finger_uid.hex()
+
+
 
 

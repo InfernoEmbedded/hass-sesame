@@ -1,16 +1,33 @@
 {
   "config": {
-    "flow_title": "Candy House Sesame BLE",
+    "flow_title": "{name}",
     "step": {
       "user": {
         "title": "Sesame BLE konfigurieren",
-        "description": "Geben Sie die Zugangsdaten für Ihr Sesame-Schloss oder -Keypad ein. Sie können eine freigegebene QR-Code-URL (ssm://) aus der offiziellen App einfügen, um die Details automatisch auszufüllen, oder sie manuell konfigurieren.",
+        "description": "Geben Sie die Zugangsdaten für Ihr Sesame-Schloss oder -Keypad ein. Sie können eine freigegebene QR-Code-URL (ssm://) aus der offiziellen App einfügen, um die Details automatisch auszufüllen, oder sie manuell konfigurieren."
+      },
+      "discover_unregistered": {
+        "title": "Register New Device",
+        "description": "Select the unregistered Sesame device nearby to automatically register and configure it. Make sure the device is in reset mode (press the reset button until the LED flashes).",
         "data": {
-          "qr_code_image": "QR-Code Bild-Upload",
-          "qr_url": "QR-Code-Setup-URL",
-          "mac_address": "Bluetooth-MAC-Adresse",
-          "secret_key": "Geheimschlüssel (16 Bytes/32 Hex-Zeichen)",
-          "model": "Produktmodell"
+          "mac_address": "Select Device"
+        }
+      },
+      "import_qr": {
+        "title": "Import via QR Code",
+        "description": "Paste the shared ssm:// URL or upload a QR Code image from the official app to configure your Sesame device.",
+        "data": {
+          "qr_code_image": "QR Code Image Upload",
+          "qr_url": "QR Code Setup URL"
+        }
+      },
+      "manual": {
+        "title": "Manual Setup",
+        "description": "Enter the MAC Address, Secret Key, and Product Model of your Sesame device manually.",
+        "data": {
+          "mac_address": "Bluetooth MAC Address",
+          "secret_key": "Secret Key (16 bytes/32 hex characters)",
+          "model": "Product Model"
         }
       },
       "select_address": {
@@ -26,12 +43,19 @@
         "data": {
           "secret_key": "Geheimschlüssel"
         }
+      },
+      "bluetooth_register_confirm": {
+        "title": "Register Discovered Device",
+        "description": "We discovered an unregistered Sesame {model} ({mac}) nearby. Do you want to pair and register it automatically?"
       }
     },
     "error": {
       "invalid_qr_code": "Fehler beim Analysieren der QR-Code-URL. Stellen Sie sicher, dass es sich um eine gültige ssm:// URL handelt.",
       "invalid_secret_key": "Ungültiges Format für den Geheimschlüssel. Er muss genau 32 Hex-Zeichen lang sein.",
-      "no_devices_found": "Keine Sesame-Geräte in der Nähe gefunden. Stellen Sie sicher, dass es eingeschaltet und in Reichweite ist."
+      "no_devices_found": "Keine Sesame-Geräte in der Nähe gefunden. Stellen Sie sicher, dass es eingeschaltet und in Reichweite ist.",
+      "no_unregistered_devices": "No unregistered Sesame devices found nearby. Make sure the device is in reset mode (LED flashing) and try again.",
+      "device_not_found": "The selected device was not found or has stopped advertising.",
+      "registration_failed": "BLE registration handshake failed. Verify that the device is in reset mode and try again."
     },
     "abort": {
       "already_configured": "Gerät ist bereits konfiguriert",

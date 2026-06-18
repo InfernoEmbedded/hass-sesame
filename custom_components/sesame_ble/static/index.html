@@ -1,0 +1,1775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keypad Manager</title>
+  <style>
+    :root {
+      /* Fallback variables matching HA Dark Theme. Updated dynamically via syncTheme() */
+      --primary-background-color: #101217;
+      --secondary-background-color: #181a20;
+      --card-background-color: #1d202a;
+      --primary-text-color: #e1e1e3;
+      --secondary-text-color: #9ba0aa;
+      --primary-color: #03a9f4;
+      --accent-color: #ff9800;
+      --error-color: #db4437;
+      --success-color: #4caf50;
+      --warning-color: #ff9800;
+      --divider-color: rgba(255, 255, 255, 0.12);
+
+      /* Derived variables */
+      --text-main: var(--primary-text-color);
+      --text-muted: var(--secondary-text-color);
+      --primary: var(--primary-color);
+      --primary-hover: var(--primary-color);
+      --primary-glow: rgba(3, 169, 244, 0.15);
+      --accent: var(--accent-color);
+      --danger: var(--error-color);
+      --danger-hover: var(--error-color);
+      --success: var(--success-color);
+      --warning: var(--warning-color);
+
+      --body-bg: var(--primary-background-color);
+      --panel-bg: var(--card-background-color);
+      --panel-border: var(--divider-color);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--body-bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+
+    h1, h2, h3, .btn, .tab-btn {
+      font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    header h1 {
+      font-size: 1.8rem;
+      font-weight: 500;
+      color: var(--text-main);
+      letter-spacing: -0.5px;
+    }
+
+    /* Device Selector & Status */
+    .controls-bar {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .select-style {
+      background: var(--secondary-background-color);
+      border: 1px solid var(--panel-border);
+      color: var(--text-main);
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-family: inherit;
+      font-weight: 500;
+      cursor: pointer;
+      outline: none;
+      transition: all 0.2s;
+      min-width: 220px;
+    }
+
+    .select-style:hover, .select-style:focus {
+      border-color: var(--primary);
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      background: var(--secondary-background-color);
+      border: 1px solid var(--panel-border);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status-connected {
+      color: var(--success);
+      border-color: rgba(76, 175, 80, 0.2);
+    }
+    .status-connected .status-dot {
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+    }
+
+    .status-disconnected {
+      color: var(--danger);
+      border-color: rgba(219, 68, 55, 0.2);
+    }
+    .status-disconnected .status-dot {
+      background: var(--danger);
+      box-shadow: 0 0 6px var(--danger);
+    }
+
+    /* Card Panel */
+    .panel {
+      background: var(--ha-card-background, var(--panel-bg));
+      border: 1px solid var(--ha-card-border-color, var(--panel-border));
+      border-radius: var(--ha-card-border-radius, 12px);
+      padding: 32px;
+      box-shadow: var(--ha-card-box-shadow, none);
+      margin-bottom: 24px;
+    }
+
+    /* Tabs */
+    .tabs-header {
+      display: flex;
+      gap: 24px;
+      border-bottom: 1px solid var(--panel-border);
+      margin-bottom: 24px;
+      padding-bottom: 0;
+    }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1rem;
+      font-weight: 500;
+      padding: 12px 4px;
+      cursor: pointer;
+      position: relative;
+      transition: color 0.2s;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+    }
+
+    .tab-btn.active {
+      color: var(--primary);
+    }
+
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--primary);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+      animation: fadeIn 0.3s ease;
+    }
+
+    /* Passcode Manager Form & List Grid */
+    .manager-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 32px;
+    }
+
+    @media (min-width: 768px) {
+      .manager-grid {
+        grid-template-columns: 350px 1fr;
+      }
+    }
+
+    /* Forms */
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .input-style {
+      width: 100%;
+      background: var(--secondary-background-color);
+      border: 1px solid var(--panel-border);
+      color: var(--text-main);
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-family: inherit;
+      outline: none;
+      font-size: 1rem;
+      transition: all 0.2s;
+    }
+
+    .input-style:focus {
+      border-color: var(--primary);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      background: var(--primary);
+      border: none;
+      color: #fff;
+      padding: 14px 24px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      filter: brightness(1.1);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    /* Cards/Items Lists */
+    .items-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .item-card {
+      background: var(--secondary-background-color);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.2s;
+    }
+
+    .item-card:hover {
+      border-color: var(--primary);
+    }
+
+    .item-info {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .item-name {
+      font-size: 1.15rem;
+      font-weight: 500;
+    }
+
+    .item-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .pin-display {
+      font-family: monospace;
+      font-size: 1rem;
+      letter-spacing: 0.5px;
+      background: rgba(0, 0, 0, 0.15);
+      padding: 3px 8px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--panel-border);
+    }
+
+    .reveal-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: color 0.2s;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .reveal-btn:hover {
+      color: var(--text-main);
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 4px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      border: 1px solid var(--panel-border);
+    }
+
+    .badge-active {
+      color: var(--success);
+      border-color: var(--success);
+      background: rgba(76, 175, 80, 0.1);
+    }
+
+    .badge-pending {
+      color: var(--warning);
+      border-color: var(--warning);
+      background: rgba(255, 152, 0, 0.1);
+    }
+
+    .badge-expired {
+      color: var(--danger);
+      border-color: var(--danger);
+      background: rgba(219, 68, 55, 0.1);
+    }
+
+    .badge-nfc {
+      color: var(--primary);
+      border-color: var(--primary);
+      background: rgba(3, 169, 244, 0.1);
+    }
+
+    .item-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .action-btn {
+      background: var(--secondary-background-color);
+      border: 1px solid var(--panel-border);
+      color: var(--text-main);
+      padding: 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .action-btn:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .action-btn-danger:hover {
+      border-color: var(--danger);
+      color: var(--danger);
+      background: rgba(219, 68, 55, 0.1);
+    }
+
+    .no-items {
+      text-align: center;
+      padding: 48px;
+      color: var(--text-muted);
+      border: 1px dashed var(--panel-border);
+      border-radius: 12px;
+    }
+
+    /* Modal / Form overlay */
+    .edit-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .edit-modal-content {
+      width: 100%;
+      max-width: 450px;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 24px;
+      position: relative;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.5rem;
+    }
+
+    .modal-close:hover {
+      color: var(--text-main);
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .btn-cancel {
+      background: none;
+      border: 1px solid var(--panel-border);
+      color: var(--text-main);
+    }
+
+    .btn-cancel:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    /* Icons */
+    .icon-svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.6; }
+      50% { transform: scale(1.05); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.6; }
+    }
+
+    .pulse-icon {
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    .quick-preset-group {
+      margin-bottom: 20px;
+    }
+
+    .preset-buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .preset-btn {
+      flex: 1;
+      background: var(--secondary-background-color);
+      border: 1px solid var(--panel-border);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .preset-btn:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .preset-btn-clear {
+      border-color: transparent;
+      color: var(--text-muted);
+    }
+
+    .preset-btn-clear:hover {
+      color: var(--danger);
+      background: rgba(219, 68, 55, 0.1);
+    }
+
+    /* Spinner styling */
+    .spinner-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      gap: 16px;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid var(--panel-border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Keypad Manager</h1>
+      <div class="controls-bar">
+        <select id="device-select" class="select-style">
+          <option value="" disabled selected>Select Keypad...</option>
+        </select>
+        <div id="device-status" class="status-badge" style="display: none;">
+          <div class="status-dot"></div>
+          <span id="status-text">Disconnected</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="panel">
+      <!-- Tabs Header -->
+      <div class="tabs-header">
+        <button class="tab-btn active" onclick="switchTab('passcodes')">Passcodes</button>
+        <button class="tab-btn" onclick="switchTab('cards')">NFC Cards</button>
+        <button class="tab-btn" onclick="switchTab('fingerprints')">Fingerprints</button>
+        <button class="tab-btn" onclick="switchTab('pairings')">Paired Locks</button>
+        <button class="tab-btn" onclick="switchTab('history')">Access Logs</button>
+      </div>
+
+      <!-- Passcodes Content -->
+      <div id="tab-passcodes" class="tab-content active">
+        <div class="manager-grid">
+          <!-- Form Section -->
+          <div class="form-container">
+            <h3 style="margin-bottom: 20px; font-weight: 600;">Add Passcode</h3>
+            <form id="passcode-form">
+              <input type="hidden" id="edit-uid">
+              <div class="form-group">
+                <label for="passcode-name">Name / Nickname</label>
+                <input type="text" id="passcode-name" class="input-style" placeholder="e.g. Guest Name" required>
+              </div>
+              <div class="form-group">
+                <label for="passcode-code">PIN Code</label>
+                <input type="password" id="passcode-code" class="input-style" placeholder="4-16 digits" required pattern="\d{4,16}">
+              </div>
+              <div class="form-group">
+                <label for="passcode-start">Start Time (Optional)</label>
+                <input type="datetime-local" id="passcode-start" class="input-style">
+              </div>
+              <div class="form-group">
+                <label for="passcode-end">End Time (Optional)</label>
+                <input type="datetime-local" id="passcode-end" class="input-style">
+              </div>
+              <div class="form-group quick-preset-group">
+                <label>Quick Duration Presets</label>
+                <div class="preset-buttons">
+                  <button type="button" class="preset-btn" onclick="setPresetDuration(1)">1 Day</button>
+                  <button type="button" class="preset-btn" onclick="setPresetDuration(7)">1 Week</button>
+                  <button type="button" class="preset-btn" onclick="setPresetDuration(30)">1 Month</button>
+                  <button type="button" class="preset-btn preset-btn-clear" onclick="clearDurationPreset()">Clear</button>
+                </div>
+              </div>
+              <button type="submit" class="btn" style="margin-top: 10px;">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                Save Passcode
+              </button>
+            </form>
+          </div>
+
+          <!-- List Section -->
+          <div class="list-container">
+            <h3 style="margin-bottom: 20px; font-weight: 600;">Passcode List</h3>
+            <div id="passcodes-list" class="items-list">
+              <div class="no-items">Select a keypad to load passcodes.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cards Content -->
+      <div id="tab-cards" class="tab-content">
+        <div class="section-header-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h3 style="font-weight: 600; margin: 0;">NFC Card List</h3>
+          <button id="add-card-btn" class="btn" onclick="startCardRegistration()" style="display: none;">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Add NFC Card
+          </button>
+        </div>
+        <div class="items-list" id="cards-list">
+          <div class="no-items">Select a keypad to load cards.</div>
+        </div>
+      </div>
+
+      <!-- Fingerprints Content -->
+      <div id="tab-fingerprints" class="tab-content">
+        <div class="section-header-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h3 style="font-weight: 600; margin: 0;">Fingerprint List</h3>
+          <button id="add-fingerprint-btn" class="btn" onclick="startFingerprintRegistration()" style="display: none;">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Add Fingerprint
+          </button>
+        </div>
+        <div class="items-list" id="fingerprints-list">
+          <div class="no-items">Select a keypad to load fingerprints.</div>
+        </div>
+      </div>
+
+      <!-- Pairings Content -->
+      <div id="tab-pairings" class="tab-content">
+        <div class="manager-grid">
+          <!-- Form Section -->
+          <div class="form-container">
+            <h3 style="margin-bottom: 20px; font-weight: 600;">Pair Lock</h3>
+            <form id="pair-form">
+              <div class="form-group">
+                <label for="pair-lock-select">Select Lock</label>
+                <select id="pair-lock-select" class="select-style" style="width: 100%;" required>
+                  <option value="" disabled selected>Select configured lock...</option>
+                </select>
+              </div>
+              <button type="submit" class="btn" style="margin-top: 10px;">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                Pair Lock
+              </button>
+            </form>
+          </div>
+
+          <!-- List Section -->
+          <div class="list-container">
+            <h3 style="margin-bottom: 20px; font-weight: 600;">Paired Locks List</h3>
+            <div id="pairings-list" class="items-list">
+              <div class="no-items">Select a keypad to load pairings.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History Content -->
+      <div id="tab-history" class="tab-content">
+        <div class="section-header-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h3 id="history-title" style="font-weight: 600; margin: 0;">Access Logs</h3>
+          <button id="refresh-history-btn" class="btn" onclick="loadHistory(true)" style="width: auto; padding: 8px 16px;">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> Refresh Logs
+          </button>
+        </div>
+        <div class="items-list" id="history-list">
+          <div class="no-items">Select a keypad to load access logs.</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Rename Modal -->
+  <div id="rename-modal" class="edit-modal">
+    <div class="edit-modal-content">
+      <div class="modal-header">
+        <h3 id="rename-modal-title">Rename Item</h3>
+        <button class="modal-close" onclick="closeRenameModal()">&times;</button>
+      </div>
+      <form id="rename-form">
+        <input type="hidden" id="rename-uid">
+        <input type="hidden" id="rename-type"> <!-- card or fingerprint -->
+        <div class="form-group">
+          <label for="rename-name">New Name</label>
+          <input type="text" id="rename-name" class="input-style" placeholder="Enter new name" required>
+        </div>
+        <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+          <button type="button" class="btn btn-cancel" onclick="closeRenameModal()">Cancel</button>
+          <button type="submit" class="btn">Rename</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- NFC Card Registration Modal -->
+  <div id="card-reg-modal" class="edit-modal">
+    <div class="edit-modal-content">
+      <div class="modal-header">
+        <h3>Add NFC Card</h3>
+        <button class="modal-close" onclick="cancelCardRegistration()">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 20px 0; text-align: center;">
+        <div class="pulse-container" style="margin-bottom: 20px;">
+          <svg class="pulse-icon" viewBox="0 0 24 24" style="width: 80px; height: 80px; fill: var(--primary-color);">
+            <path d="M4 20h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2zM4 6h16v12H4V6zm2 2v2h2V8H6zm0 4v2h2v-2H6zm4-4v2h2V8h-2zm0 4v2h2v-2h-2zm4-4v2h2V8h-2zm0 4v2h2v-2h-2zm-8 4v2h10v-2H6z"/>
+          </svg>
+        </div>
+        <p id="card-reg-status" style="font-size: 16px; font-weight: 500; color: var(--secondary-text-color);">
+          Waiting for NFC card tap...
+        </p>
+        
+        <form id="card-add-form" style="display: none; text-align: left; margin-top: 20px;">
+          <input type="hidden" id="card-add-uid">
+          <input type="hidden" id="card-add-type">
+          <div class="form-group">
+            <label for="card-add-name">Card Name / Owner</label>
+            <input type="text" id="card-add-name" class="input-style" placeholder="e.g. John's Card" required>
+          </div>
+          <button type="submit" class="btn" style="width: 100%; margin-top: 15px;">Save Card</button>
+        </form>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+        <button id="card-reg-cancel-btn" class="btn btn-cancel" onclick="cancelCardRegistration()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fingerprint Registration Modal -->
+  <div id="fingerprint-reg-modal" class="edit-modal">
+    <div class="edit-modal-content">
+      <div class="modal-header">
+        <h3>Add Fingerprint</h3>
+        <button class="modal-close" onclick="cancelFingerprintRegistration()">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 20px 0; text-align: center;">
+        <div class="pulse-container" style="margin-bottom: 20px;">
+          <svg class="pulse-icon" viewBox="0 0 24 24" style="width: 80px; height: 80px; fill: var(--primary-color);">
+            <path d="M17.81 4.47c-.08 0-.16-.02-.23-.06C15.66 3.42 14 3 12.01 3c-1.98 0-3.86.47-5.57 1.41-.24.13-.54.04-.68-.2-.13-.24-.04-.55.2-.68C7.82 2.52 9.86 2 12.01 2c2.13 0 3.94.46 5.8 1.48.24.13.33.44.2.68-.07.15-.22.31-.2.31zM3.02 11.1c-.13 0-.27-.05-.37-.15-.43-.43-.78-.99-1.04-1.68-.1-.26.03-.56.3-.65.26-.1.56.03.65.3.22.58.51 1.05.86 1.4.2.2.2.51 0 .71-.11.07-.26.17-.4.17zm19.34.18c-.14 0-.28-.06-.38-.16-.72-.73-1.22-1.72-1.44-2.82-.05-.27.13-.53.4-.58.27-.05.53.13.58.4.19.95.61 1.8 1.22 2.42.2.2.2.51 0 .71-.1.11-.24.16-.38.16zm-7.6 8.38c-.07 0-.15-.02-.22-.05-1.19-.51-2.91-.77-5.11-.77-2.19 0-3.99.28-5.35.83-.25.1-.55-.02-.65-.27-.1-.25.02-.55.27-.65 1.5-.6 3.46-.91 5.73-.91 2.36 0 4.21.28 5.54.84.25.1.37.4.27.65-.08.17-.24.23-.48.23zM9.51 19.9c-.28 0-.5-.22-.5-.5v-2.02c0-.28.22-.5.5-.5s.5.22.5.5v2.02c0 .28-.22.5-.5.5zm4.98-2.52c-.28 0-.5-.22-.5-.5v-2.02c0-.28.22-.5.5-.5s.5.22.5.5v2.02c0 .28-.22.5-.5.5zm-3.52-5.4c.05.27-.13.53-.4.58-.27.05-.53-.13-.58-.4C9.58 10.12 9 8.28 9 6.2c0-1.63.39-2.82 1.15-3.54.2-.19.51-.19.71 0 .19.2.19.51 0 .71-.56.53-.86 1.48-.86 2.83 0 1.88.52 3.51.89 5.37.06.26-.13.52-.39.57zM12.01 13c-.28 0-.5-.22-.5-.5V8.16c0-.28.22-.5.5-.5s.5.22.5.5v4.34c0 .28-.22.5-.5.5zm2.96-1.5c-.05-.27.13-.53.4-.58 1.41-.27 2.63-2.11 2.63-4.72 0-1.63-.39-2.82-1.15-3.54-.2-.19-.51-.19-.71 0-.19.2-.19.51 0 .71.56.53.86 1.48.86 2.83 0 2.15-1.01 3.61-2.17 3.84-.27.05-.45.31-.4.58.05.24.28.41.54.41.02.01.03.01.05.01zm-5.96 5.42c-.22 0-.42-.15-.48-.37-.77-2.68-1.52-4.1-2.53-5.26-.19-.21-.17-.53.04-.72.21-.19.53-.17.72.04 1.12 1.28 1.95 2.87 2.75 5.67.08.26-.08.54-.34.61-.06.01-.11.03-.16.03zm7.98-2.68c-.26 0-.48-.2-.5-.47-.19-2.22-1.28-4.22-3.08-5.63-.22-.17-.26-.49-.09-.71.17-.22.49-.26.71-.09 2.05 1.6 3.29 3.89 3.51 6.42.02.28-.18.52-.46.54h-.09z"/>
+          </svg>
+        </div>
+        <p id="fingerprint-reg-status" style="font-size: 16px; font-weight: 500; color: var(--secondary-text-color);">
+          Waiting for fingerprint scan...
+        </p>
+        
+        <form id="fingerprint-add-form" style="display: none; text-align: left; margin-top: 20px;">
+          <input type="hidden" id="fingerprint-add-uid">
+          <div class="form-group">
+            <label for="fingerprint-add-name">Fingerprint Name / Owner</label>
+            <input type="text" id="fingerprint-add-name" class="input-style" placeholder="e.g. John's Index" required>
+          </div>
+          <button type="submit" class="btn" style="width: 100%; margin-top: 15px;">Save Fingerprint</button>
+        </form>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+        <button id="fingerprint-reg-cancel-btn" class="btn btn-cancel" onclick="cancelFingerprintRegistration()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let activeKeypads = [];
+    let currentKeypadEntryId = "";
+    let revealedPINs = new Set();
+
+    function syncTheme() {
+      try {
+        const parentDoc = window.parent.document;
+        const root = parentDoc.querySelector(':root') || parentDoc.documentElement;
+        if (!root) return;
+
+        const computed = window.parent.getComputedStyle(root);
+        const target = document.documentElement;
+
+        const vars = [
+          '--primary-background-color',
+          '--secondary-background-color',
+          '--card-background-color',
+          '--primary-text-color',
+          '--secondary-text-color',
+          '--disabled-text-color',
+          '--divider-color',
+          '--primary-color',
+          '--accent-color',
+          '--error-color',
+          '--warning-color',
+          '--success-color',
+          '--app-header-background-color',
+          '--app-header-text-color',
+          '--ha-card-border-radius',
+          '--ha-card-box-shadow',
+          '--ha-card-border-color',
+          '--ha-card-background',
+        ];
+
+        vars.forEach(v => {
+          const val = computed.getPropertyValue(v).trim();
+          if (val) {
+            target.style.setProperty(v, val);
+          }
+        });
+      } catch (e) {
+        console.warn("Failed to sync theme from parent window:", e);
+      }
+    }
+
+    // Event listener for Home Assistant object updates
+    window.addEventListener("hass-changed", (event) => {
+      syncTheme();
+      loadKeypads();
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      syncTheme();
+      // Periodic refresh
+      setInterval(loadKeypads, 10000);
+      loadKeypads();
+
+      // Form Submit
+      document.getElementById("passcode-form").addEventListener("submit", handlePasscodeSubmit);
+      document.getElementById("rename-form").addEventListener("submit", handleRenameSubmit);
+      document.getElementById("card-add-form").addEventListener("submit", handleCardAddSubmit);
+      document.getElementById("fingerprint-add-form").addEventListener("submit", handleFingerprintAddSubmit);
+      document.getElementById("pair-form").addEventListener("submit", handlePairSubmit);
+
+      // Device Select change
+      document.getElementById("device-select").addEventListener("change", (e) => {
+        currentKeypadEntryId = e.target.value;
+        renderActiveKeypad();
+      });
+    });
+
+    let allConfiguredLocks = [];
+
+    async function loadKeypads() {
+      const hass = window.hass || window.parent.hass;
+      if (!hass) return;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/passcodes");
+        const data = await response.json();
+        activeKeypads = data.keypads || [];
+        allConfiguredLocks = data.all_locks || [];
+        updateDeviceSelect();
+      } catch (err) {
+        console.error("Error fetching keypad data:", err);
+      }
+    }
+
+    function updateDeviceSelect() {
+      const select = document.getElementById("device-select");
+      const currentSelected = select.value;
+      
+      // Clear all options except placeholder
+      select.innerHTML = '<option value="" disabled>Select Keypad...</option>';
+
+      if (activeKeypads.length === 0) {
+        select.innerHTML = '<option value="" disabled selected>No Keypads Configured</option>';
+        return;
+      }
+
+      activeKeypads.forEach(k => {
+        const opt = document.createElement("option");
+        opt.value = k.entry_id;
+        opt.innerText = k.name;
+        select.appendChild(opt);
+      });
+
+      if (currentSelected && activeKeypads.some(k => k.entry_id === currentSelected)) {
+        select.value = currentSelected;
+        currentKeypadEntryId = currentSelected;
+      } else if (!currentKeypadEntryId && activeKeypads.length > 0) {
+        select.value = activeKeypads[0].entry_id;
+        currentKeypadEntryId = activeKeypads[0].entry_id;
+      }
+
+      renderActiveKeypad();
+    }
+
+    function renderActiveKeypad() {
+      const keypad = activeKeypads.find(k => k.entry_id === currentKeypadEntryId);
+      const statusBadge = document.getElementById("device-status");
+      const statusText = document.getElementById("status-text");
+
+      if (!keypad) {
+        statusBadge.style.display = "none";
+        clearLists();
+        return;
+      }
+
+      // Render Connection Status
+      statusBadge.style.display = "inline-flex";
+      statusBadge.className = "status-badge " + (keypad.is_logged_in ? "status-connected" : "status-disconnected");
+      statusText.innerText = keypad.is_logged_in ? "Online" : "Connecting...";
+
+      // Render Passcodes
+      const passcodesList = document.getElementById("passcodes-list");
+      if (keypad.passcodes.length === 0) {
+        passcodesList.innerHTML = '<div class="no-items">No passcodes registered.</div>';
+      } else {
+        passcodesList.innerHTML = "";
+        keypad.passcodes.forEach(p => {
+          const isRevealed = revealedPINs.has(p.uid);
+          const pinVal = isRevealed ? p.code : "••••••";
+          const startStr = p.start ? formatLocalTime(p.start) : "";
+          const endStr = p.end ? formatLocalTime(p.end) : "";
+          
+          let scheduleText = "";
+          if (startStr && endStr) {
+            scheduleText = `Valid: ${startStr} - ${endStr}`;
+          } else if (startStr) {
+            scheduleText = `Valid from: ${startStr}`;
+          } else if (endStr) {
+            scheduleText = `Valid until: ${endStr}`;
+          }
+
+          // Evaluate Schedule Badge
+          let statusBadgeHTML = '<span class="badge badge-active">Active</span>';
+          if (p.start || p.end) {
+            const now = new Date();
+            const startDt = p.start ? new Date(p.start.replace(" ", "T")) : null;
+            const endDt = p.end ? new Date(p.end.replace(" ", "T")) : null;
+
+            if (startDt && now < startDt) {
+              statusBadgeHTML = '<span class="badge badge-pending">Pending</span>';
+            } else if (endDt && now >= endDt) {
+              statusBadgeHTML = '<span class="badge badge-expired">Expired</span>';
+            }
+          }
+
+          const card = document.createElement("div");
+          card.className = "item-card";
+          card.innerHTML = `
+            <div class="item-info">
+              <div class="item-name">${escapeHTML(p.name)}</div>
+              <div class="item-meta">
+                <span class="pin-display">
+                  <span>${pinVal}</span>
+                  <button class="reveal-btn" onclick="togglePIN('${p.uid}')">
+                    ${isRevealed ? 
+                      `<svg class="icon-svg" viewBox="0 0 24 24"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0-5C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>` : 
+                      `<svg class="icon-svg" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>`
+                    }
+                  </button>
+                </span>
+                ${statusBadgeHTML}
+                ${scheduleText ? `<span>${escapeHTML(scheduleText)}</span>` : ""}
+              </div>
+            </div>
+            <div class="item-actions">
+              <button class="action-btn" onclick="editPasscode('${p.uid}', '${escapeHTML(p.name)}', '${p.code}', '${p.start}', '${p.end}')">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+              </button>
+              <button class="action-btn action-btn-danger" onclick="deletePasscode('${p.uid}')">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              </button>
+            </div>
+          `;
+          passcodesList.appendChild(card);
+        });
+      }
+
+      // Render Cards
+      const cardsList = document.getElementById("cards-list");
+      if (keypad.cards.length === 0) {
+        cardsList.innerHTML = '<div class="no-items">No NFC cards registered.</div>';
+      } else {
+        cardsList.innerHTML = "";
+        keypad.cards.forEach(c => {
+          const card = document.createElement("div");
+          card.className = "item-card";
+          card.innerHTML = `
+            <div class="item-info">
+              <div class="item-name">${escapeHTML(c.name)}</div>
+              <div class="item-meta">
+                <span class="badge badge-nfc">NFC Card</span>
+                <span>ID: ${c.uid}</span>
+              </div>
+            </div>
+            <div class="item-actions">
+              <button class="action-btn" onclick="openRenameModal('card', '${c.uid}', '${escapeHTML(c.name)}')">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+              </button>
+              <button class="action-btn action-btn-danger" onclick="deleteCard('${c.uid}')">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              </button>
+            </div>
+          `;
+          cardsList.appendChild(card);
+        });
+      }
+
+      // Show/Hide Add Buttons depending on connection/online state
+      const addCardBtn = document.getElementById("add-card-btn");
+      const addFingerprintBtn = document.getElementById("add-fingerprint-btn");
+      if (keypad.is_logged_in) {
+        if (addCardBtn) addCardBtn.style.display = "inline-flex";
+        if (addFingerprintBtn) addFingerprintBtn.style.display = "inline-flex";
+      } else {
+        if (addCardBtn) addCardBtn.style.display = "none";
+        if (addFingerprintBtn) addFingerprintBtn.style.display = "none";
+      }
+
+      // Render Fingerprints
+      const fingerprintsList = document.getElementById("fingerprints-list");
+      if (keypad.fingerprints.length === 0) {
+        fingerprintsList.innerHTML = '<div class="no-items">No fingerprints registered.</div>';
+      } else {
+        fingerprintsList.innerHTML = "";
+        keypad.fingerprints.forEach(f => {
+          const card = document.createElement("div");
+          card.className = "item-card";
+          card.innerHTML = `
+            <div class="item-info">
+              <div class="item-name">${escapeHTML(f.name)}</div>
+              <div class="item-meta">
+                <span class="badge badge-fingerprint" style="background-color: #f39c12; color: white;">Fingerprint</span>
+                <span>ID: ${f.uid}</span>
+              </div>
+            </div>
+            <div class="item-actions">
+              <button class="action-btn" onclick="openRenameModal('fingerprint', '${f.uid}', '${escapeHTML(f.name)}')">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+              </button>
+              <button class="action-btn action-btn-danger" onclick="deleteFingerprint('${f.uid}')">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              </button>
+            </div>
+          `;
+          fingerprintsList.appendChild(card);
+        });
+      }
+
+      // Render Paired Locks
+      const pairingsList = document.getElementById("pairings-list");
+      const pairSelect = document.getElementById("pair-lock-select");
+      if (!keypad.paired_locks || keypad.paired_locks.length === 0) {
+        pairingsList.innerHTML = '<div class="no-items">No locks paired to this keypad.</div>';
+      } else {
+        pairingsList.innerHTML = "";
+        const statusMap = {
+          0: "Empty",
+          1: "Disconnected",
+          2: "Scanning",
+          3: "Connecting",
+          4: "Connected",
+          5: "Logging in",
+          6: "Locked",
+          7: "Unlocked",
+          8: "Moving"
+        };
+        keypad.paired_locks.forEach(l => {
+          const card = document.createElement("div");
+          card.className = "item-card";
+          card.innerHTML = `
+            <div class="item-info">
+              <div class="item-name">${escapeHTML(l.name)}</div>
+              <div class="item-meta">
+                <span class="badge" style="background-color: ${l.status >= 6 ? 'var(--success)' : 'var(--accent)'}; color: white;">
+                  Status: ${statusMap[l.status] || "Unknown"}
+                </span>
+                <span>UUID: ${l.uuid}</span>
+              </div>
+            </div>
+            <div class="item-actions">
+              <button class="action-btn action-btn-danger" onclick="unpairLock('${l.uuid}')">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </div>
+          `;
+          pairingsList.appendChild(card);
+        });
+      }
+
+      // Populate Pair Lock Dropdown
+      const pairedUUIDs = new Set((keypad.paired_locks || []).map(l => l.uuid));
+      const availableLocks = allConfiguredLocks.filter(l => !pairedUUIDs.has(l.uuid));
+      
+      pairSelect.innerHTML = '<option value="" disabled selected>Select configured lock...</option>';
+      if (availableLocks.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.disabled = true;
+        opt.innerText = "No other locks available in HA";
+        pairSelect.appendChild(opt);
+      } else {
+        availableLocks.forEach(l => {
+          const opt = document.createElement("option");
+          opt.value = l.entry_id;
+          opt.innerText = l.name;
+          pairSelect.appendChild(opt);
+        });
+      }
+
+      // Render History if it is currently active
+      const activeTabBtn = document.querySelector(".tab-btn.active");
+      if (activeTabBtn) {
+        if (activeTabBtn.innerText.toLowerCase().includes("history") || activeTabBtn.innerText.toLowerCase().includes("logs")) {
+          loadHistory();
+        }
+      }
+    }
+
+    function clearLists() {
+      document.getElementById("passcodes-list").innerHTML = '<div class="no-items">Select a keypad to load passcodes.</div>';
+      document.getElementById("cards-list").innerHTML = '<div class="no-items">Select a keypad to load cards.</div>';
+      document.getElementById("fingerprints-list").innerHTML = '<div class="no-items">Select a keypad to load fingerprints.</div>';
+      document.getElementById("pairings-list").innerHTML = '<div class="no-items">Select a keypad to load pairings.</div>';
+      document.getElementById("history-list").innerHTML = '<div class="no-items">Select a keypad to load access logs.</div>';
+    }
+
+    function togglePIN(uid) {
+      if (revealedPINs.has(uid)) {
+        revealedPINs.delete(uid);
+      } else {
+        revealedPINs.add(uid);
+      }
+      renderActiveKeypad();
+    }
+
+    function switchTab(tabName) {
+      document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+      document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+
+      const activeBtn = Array.from(document.querySelectorAll(".tab-btn")).find(btn => btn.getAttribute("onclick").includes(tabName));
+      if (activeBtn) activeBtn.classList.add("active");
+
+      const activeContent = document.getElementById("tab-" + tabName);
+      if (activeContent) activeContent.classList.add("active");
+
+      if (tabName === 'history') {
+        loadHistory();
+      }
+    }
+
+    // Passcode Add/Edit Submit
+    async function handlePasscodeSubmit(e) {
+      e.preventDefault();
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      const uid = document.getElementById("edit-uid").value;
+      const name = document.getElementById("passcode-name").value;
+      const code = document.getElementById("passcode-code").value;
+      const startInput = document.getElementById("passcode-start").value;
+      const endInput = document.getElementById("passcode-end").value;
+
+      // Reformat HTML5 datetime-local (YYYY-MM-DDTHH:MM) to YYYY-MM-DD HH:MM
+      const start = startInput ? startInput.replace("T", " ") : "";
+      const end = endInput ? endInput.replace("T", " ") : "";
+
+      // Clear form immediately
+      resetPasscodeForm();
+
+      // Display animated spinner on passcode list
+      const passcodesList = document.getElementById("passcodes-list");
+      passcodesList.innerHTML = `
+        <div class="spinner-container">
+          <div class="spinner"></div>
+          <div>Saving passcode...</div>
+        </div>
+      `;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/passcodes", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            uid,
+            name,
+            code,
+            start,
+            end
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+          // Restore form values
+          document.getElementById("edit-uid").value = uid;
+          document.getElementById("passcode-name").value = name;
+          document.getElementById("passcode-code").value = code;
+          document.getElementById("passcode-start").value = startInput;
+          document.getElementById("passcode-end").value = endInput;
+          if (uid) {
+            document.querySelector("#passcode-form button[type='submit']").innerHTML = `
+              <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Update Passcode
+            `;
+          }
+          await loadKeypads();
+        } else {
+          await loadKeypads();
+        }
+      } catch (err) {
+        console.error("Error saving passcode:", err);
+        alert("Failed to save passcode: " + err.message);
+        // Restore form values
+        document.getElementById("edit-uid").value = uid;
+        document.getElementById("passcode-name").value = name;
+        document.getElementById("passcode-code").value = code;
+        document.getElementById("passcode-start").value = startInput;
+        document.getElementById("passcode-end").value = endInput;
+        if (uid) {
+          document.querySelector("#passcode-form button[type='submit']").innerHTML = `
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Update Passcode
+          `;
+        }
+        await loadKeypads();
+      }
+    }
+
+    function editPasscode(uid, name, code, start, end) {
+      document.getElementById("edit-uid").value = uid;
+      document.getElementById("passcode-name").value = name;
+      document.getElementById("passcode-code").value = code;
+      
+      // format YYYY-MM-DD HH:MM back to YYYY-MM-DDTHH:MM
+      document.getElementById("passcode-start").value = start ? start.replace(" ", "T") : "";
+      document.getElementById("passcode-end").value = end ? end.replace(" ", "T") : "";
+      
+      document.querySelector("#passcode-form button[type='submit']").innerHTML = `
+        <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Update Passcode
+      `;
+    }
+
+    function resetPasscodeForm() {
+      document.getElementById("edit-uid").value = "";
+      document.getElementById("passcode-name").value = "";
+      document.getElementById("passcode-code").value = "";
+      document.getElementById("passcode-start").value = "";
+      document.getElementById("passcode-end").value = "";
+      document.querySelector("#passcode-form button[type='submit']").innerHTML = `
+        <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Save Passcode
+      `;
+    }
+
+    async function deletePasscode(uid) {
+      if (!confirm("Are you sure you want to delete this passcode?")) return;
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        await hass.fetchWithAuth("/api/sesame_ble/passcodes", {
+          method: "DELETE",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            uid
+          })
+        });
+        loadKeypads();
+      } catch (err) {
+        console.error("Error deleting passcode:", err);
+      }
+    }
+
+    // Rename Cards/Fingerprints Modals
+    function openRenameModal(type, uid, name) {
+      document.getElementById("rename-uid").value = uid;
+      document.getElementById("rename-type").value = type;
+      document.getElementById("rename-name").value = name;
+      document.getElementById("rename-modal-title").innerText = `Rename ${type === 'card' ? 'NFC Card' : 'Fingerprint'}`;
+      document.getElementById("rename-modal").style.display = "flex";
+    }
+
+    function closeRenameModal() {
+      document.getElementById("rename-modal").style.display = "none";
+    }
+
+    async function handleRenameSubmit(e) {
+      e.preventDefault();
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      const uid = document.getElementById("rename-uid").value;
+      const type = document.getElementById("rename-type").value;
+      const name = document.getElementById("rename-name").value;
+      const endpoint = `/api/sesame_ble/${type === 'card' ? 'cards' : 'fingerprints'}`;
+
+      try {
+        const response = await hass.fetchWithAuth(endpoint, {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            uid,
+            name
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+        } else {
+          closeRenameModal();
+          loadKeypads();
+        }
+      } catch (err) {
+        console.error("Error renaming item:", err);
+      }
+    }
+
+    // Delete Cards/Fingerprints
+    async function deleteCard(uid) {
+      if (!confirm("Are you sure you want to delete this NFC card?")) return;
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        await hass.fetchWithAuth("/api/sesame_ble/cards", {
+          method: "DELETE",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            uid
+          })
+        });
+        loadKeypads();
+      } catch (err) {
+        console.error("Error deleting card:", err);
+      }
+    }
+
+    async function deleteFingerprint(uid) {
+      if (!confirm("Are you sure you want to delete this fingerprint?")) return;
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        await hass.fetchWithAuth("/api/sesame_ble/fingerprints", {
+          method: "DELETE",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            uid
+          })
+        });
+        loadKeypads();
+      } catch (err) {
+        console.error("Error deleting fingerprint:", err);
+      }
+    }
+
+    // Helper functions
+    function escapeHTML(str) {
+      return str.replace(/[&<>'"]/g, 
+        tag => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          "'": '&#39;',
+          '"': '&quot;'
+        }[tag] || tag)
+      );
+    }
+
+    function formatLocalTime(dtStr) {
+      // Input format: YYYY-MM-DD HH:MM
+      try {
+        const parts = dtStr.split(" ");
+        const dateParts = parts[0].split("-");
+        const timeParts = parts[1].split(":");
+        const dt = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], timeParts[0], timeParts[1]);
+        return dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      } catch (e) {
+        return dtStr;
+      }
+    }
+
+    function formatDateToLocalInput(date) {
+      const pad = (num) => String(num).padStart(2, '0');
+      const yyyy = date.getFullYear();
+      const MM = pad(date.getMonth() + 1);
+      const dd = pad(date.getDate());
+      const hh = pad(date.getHours());
+      const mm = pad(date.getMinutes());
+      return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
+    }
+
+    function setPresetDuration(days) {
+      const now = new Date();
+      now.setSeconds(0, 0);
+      
+      const future = new Date(now.getTime());
+      future.setDate(future.getDate() + days);
+
+      document.getElementById("passcode-start").value = formatDateToLocalInput(now);
+      document.getElementById("passcode-end").value = formatDateToLocalInput(future);
+    }
+
+    function clearDurationPreset() {
+      document.getElementById("passcode-start").value = "";
+      document.getElementById("passcode-end").value = "";
+    }
+
+    // --- NFC Card Registration JS ---
+    let cardRegModalOpen = false;
+    let cardRegPollInterval = null;
+
+    async function startCardRegistration() {
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/cards/register", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            action: "start"
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+          return;
+        }
+
+        // Open Modal
+        document.getElementById("card-reg-status").innerText = "Waiting for NFC card tap...";
+        document.getElementById("card-add-uid").value = "";
+        document.getElementById("card-add-type").value = "";
+        document.getElementById("card-add-name").value = "";
+        document.getElementById("card-add-form").style.display = "none";
+        document.getElementById("card-reg-modal").style.display = "flex";
+        
+        cardRegModalOpen = true;
+        startCardRegPoll();
+      } catch (err) {
+        console.error("Error starting card registration:", err);
+      }
+    }
+
+    function startCardRegPoll() {
+      if (cardRegPollInterval) clearInterval(cardRegPollInterval);
+      cardRegPollInterval = setInterval(async () => {
+        await loadKeypads();
+        const keypad = activeKeypads.find(k => k.entry_id === currentKeypadEntryId);
+        if (keypad && keypad.scanned_card) {
+          const card = keypad.scanned_card;
+          document.getElementById("card-reg-status").innerText = `NFC Card Scanned! (ID: ${card.uid})`;
+          document.getElementById("card-add-uid").value = card.uid;
+          document.getElementById("card-add-type").value = card.type;
+          document.getElementById("card-add-form").style.display = "block";
+          clearInterval(cardRegPollInterval);
+          cardRegPollInterval = null;
+        }
+      }, 500);
+    }
+
+    function stopCardRegPoll() {
+      if (cardRegPollInterval) {
+        clearInterval(cardRegPollInterval);
+        cardRegPollInterval = null;
+      }
+    }
+
+    async function cancelCardRegistration() {
+      stopCardRegPoll();
+      cardRegModalOpen = false;
+      document.getElementById("card-reg-modal").style.display = "none";
+
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        await hass.fetchWithAuth("/api/sesame_ble/cards/register", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            action: "stop"
+          })
+        });
+      } catch (err) {
+        console.error("Error stopping card registration:", err);
+      }
+    }
+
+    async function handleCardAddSubmit(e) {
+      e.preventDefault();
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      const uid = document.getElementById("card-add-uid").value;
+      const type = parseInt(document.getElementById("card-add-type").value) || 0x80;
+      const name = document.getElementById("card-add-name").value;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/cards/add", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            uid,
+            type,
+            name
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+        } else {
+          document.getElementById("card-reg-modal").style.display = "none";
+          cardRegModalOpen = false;
+          loadKeypads();
+        }
+      } catch (err) {
+        console.error("Error adding card:", err);
+      }
+    }
+
+    // --- Fingerprint Registration JS ---
+    let fingerprintRegModalOpen = false;
+    let fingerprintRegPollInterval = null;
+
+    async function startFingerprintRegistration() {
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/fingerprints/register", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            action: "start"
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+          return;
+        }
+
+        // Open Modal
+        document.getElementById("fingerprint-reg-status").innerText = "Waiting for fingerprint scan...";
+        document.getElementById("fingerprint-add-uid").value = "";
+        document.getElementById("fingerprint-add-name").value = "";
+        document.getElementById("fingerprint-add-form").style.display = "none";
+        document.getElementById("fingerprint-reg-modal").style.display = "flex";
+        
+        fingerprintRegModalOpen = true;
+        startFingerprintRegPoll();
+      } catch (err) {
+        console.error("Error starting fingerprint registration:", err);
+      }
+    }
+
+    function startFingerprintRegPoll() {
+      if (fingerprintRegPollInterval) clearInterval(fingerprintRegPollInterval);
+      fingerprintRegPollInterval = setInterval(async () => {
+        await loadKeypads();
+        const keypad = activeKeypads.find(k => k.entry_id === currentKeypadEntryId);
+        if (keypad && keypad.scanned_fingerprint) {
+          const finger = keypad.scanned_fingerprint;
+          document.getElementById("fingerprint-reg-status").innerText = `Fingerprint Scanned! (ID: ${finger.uid})`;
+          document.getElementById("fingerprint-add-uid").value = finger.uid;
+          document.getElementById("fingerprint-add-form").style.display = "block";
+          clearInterval(fingerprintRegPollInterval);
+          fingerprintRegPollInterval = null;
+        }
+      }, 500);
+    }
+
+    function stopFingerprintRegPoll() {
+      if (fingerprintRegPollInterval) {
+        clearInterval(fingerprintRegPollInterval);
+        fingerprintRegPollInterval = null;
+      }
+    }
+
+    async function cancelFingerprintRegistration() {
+      stopFingerprintRegPoll();
+      fingerprintRegModalOpen = false;
+      document.getElementById("fingerprint-reg-modal").style.display = "none";
+
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        await hass.fetchWithAuth("/api/sesame_ble/fingerprints/register", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            action: "stop"
+          })
+        });
+      } catch (err) {
+        console.error("Error stopping fingerprint registration:", err);
+      }
+    }
+
+    async function handleFingerprintAddSubmit(e) {
+      e.preventDefault();
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      const uid = document.getElementById("fingerprint-add-uid").value;
+      const name = document.getElementById("fingerprint-add-name").value;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/fingerprints", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            uid,
+            name
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+        } else {
+          await cancelFingerprintRegistration();
+          loadKeypads();
+        }
+      } catch (err) {
+        console.error("Error saving fingerprint:", err);
+      }
+    }
+
+    // --- Lock Pairing JS ---
+    async function handlePairSubmit(e) {
+      e.preventDefault();
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      const lockSelect = document.getElementById("pair-lock-select");
+      const lockEntryId = lockSelect.value;
+      if (!lockEntryId) return;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/keypad/pair", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            lock_entry_id: lockEntryId
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+        } else {
+          loadKeypads();
+        }
+      } catch (err) {
+        console.error("Error pairing lock:", err);
+      }
+    }
+
+    async function unpairLock(uuid) {
+      if (!confirm("Are you sure you want to unpair this lock from the keypad?")) return;
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/keypad/unpair", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            lock_uuid: uuid
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+        } else {
+          loadKeypads();
+        }
+      } catch (err) {
+        console.error("Error unpairing lock:", err);
+      }
+    }
+
+    // --- Access Logs / History JS ---
+    async function loadHistory(forceRefresh = false) {
+      if (!currentKeypadEntryId) return;
+      const hass = window.hass || window.parent.hass;
+      if (!hass) return;
+
+      const historyList = document.getElementById("history-list");
+      if (forceRefresh) {
+        historyList.innerHTML = '<div class="no-items"><svg class="icon-svg pulse-icon" viewBox="0 0 24 24" style="width: 24px; height: 24px; margin-bottom: 10px;"><path d="M12 4V2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg><br>Fetching logs from device...</div>';
+      }
+
+      try {
+        const response = await hass.fetchWithAuth(`/api/sesame_ble/history?entry_id=${currentKeypadEntryId}`);
+        const data = await response.json();
+        
+        const lockName = data.lock_name;
+        const historyTitle = document.getElementById("history-title");
+        if (lockName) {
+          historyTitle.innerText = `Access Logs - Paired Lock: ${lockName}`;
+        } else {
+          historyTitle.innerText = `Access Logs - No Paired Lock Found`;
+        }
+
+        const logs = data.history || [];
+        if (logs.length === 0) {
+          historyList.innerHTML = '<div class="no-items">No access logs found.</div>';
+        } else {
+          historyList.innerHTML = "";
+          logs.forEach(item => {
+            const card = document.createElement("div");
+            card.className = "item-card";
+            card.style.alignItems = "center";
+            card.style.marginBottom = "12px";
+            
+            const isUnlock = item.event_type.toLowerCase() === 'unlock';
+            const bgClass = isUnlock ? 'rgba(76, 175, 80, 0.1)' : 'rgba(219, 68, 55, 0.1)';
+            const iconColor = isUnlock ? 'var(--success)' : 'var(--danger)';
+            const iconSvg = isUnlock ? 
+              `<svg class="icon-svg" style="color: ${iconColor};" viewBox="0 0 24 24"><path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6-5c1.66 0 3 1.34 3 3v2H9V6c0-1.66 1.34-3 3-3zm6 15H6V10h12v10z"/></svg>` :
+              `<svg class="icon-svg" style="color: ${iconColor};" viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+
+            card.innerHTML = `
+              <div class="item-info" style="flex-direction: row; align-items: center; gap: 16px; width: 100%;">
+                <div class="log-indicator" style="width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: ${bgClass}; flex-shrink: 0;">
+                  ${iconSvg}
+                </div>
+                <div style="flex-grow: 1;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span class="item-name" style="font-size: 1.1rem; font-weight: 500;">${escapeHTML(item.caller)}</span>
+                    <span style="font-size: 0.85rem; color: var(--text-muted);">${formatLocalTime(formatTimestamp(item.timestamp))}</span>
+                  </div>
+                  <div class="item-meta">
+                    <span class="badge ${isUnlock ? 'badge-active' : 'badge-expired'}">${item.event_type}</span>
+                    <span style="background: rgba(255,255,255,0.05); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--panel-border);">Method: ${escapeHTML(item.method)}</span>
+                  </div>
+                </div>
+              </div>
+            `;
+            historyList.appendChild(card);
+          });
+        }
+      } catch (err) {
+        console.error("Error loading history:", err);
+        historyList.innerHTML = '<div class="no-items" style="color: var(--danger);">Failed to load history logs.</div>';
+      }
+    }
+
+    function formatTimestamp(ts) {
+      const date = new Date(ts * 1000);
+      const pad = (num) => String(num).padStart(2, '0');
+      const yyyy = date.getFullYear();
+      const MM = pad(date.getMonth() + 1);
+      const dd = pad(date.getDate());
+      const hh = pad(date.getHours());
+      const mm = pad(date.getMinutes());
+      return `${yyyy}-${MM}-${dd} ${hh}:${mm}`;
+    }
+  </script>
+</body>
+</html>

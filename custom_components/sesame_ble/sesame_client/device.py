@@ -39,10 +39,16 @@ OP_PUBLISH = 0x08
 ITEM_REGISTRATION = 1
 ITEM_LOGIN = 2
 ITEM_INITIAL = 14
+ITEM_AUTOLOCK = 11
 ITEM_MECH_SETTING = 80
 ITEM_MECH_STATUS = 81
 ITEM_LOCK = 82
 ITEM_UNLOCK = 83
+ITEM_HISTORY = 4
+ITEM_HISTORY_DELETE = 18
+ITEM_KEYPAD_LOCK_LIST = 102
+ITEM_ADD_SESAME = 101
+ITEM_REMOVE_SESAME = 103
 
 # Touch Keypad Passcode Item Codes
 ITEM_PASSCODE_CHANGE = 123
@@ -52,6 +58,25 @@ ITEM_PASSCODE_NOTIFY = 126
 ITEM_PASSCODE_LAST = 127
 ITEM_PASSCODE_FIRST = 128
 ITEM_PASSCODE_ADD = 138
+
+# Touch Keypad Card Item Codes
+ITEM_CARD_CHANGE = 107
+ITEM_CARD_DELETE = 108
+ITEM_CARD_GET = 109
+ITEM_CARD_NOTIFY = 110
+ITEM_CARD_LAST = 111
+ITEM_CARD_FIRST = 112
+ITEM_CARD_MODE_SET = 114
+ITEM_CARD_ADD = 140
+
+# Touch Keypad Fingerprint Item Codes
+ITEM_FINGER_CHANGE = 115
+ITEM_FINGER_DELETE = 116
+ITEM_FINGER_GET = 117
+ITEM_FINGER_NOTIFY = 118
+ITEM_FINGER_LAST = 119
+ITEM_FINGER_FIRST = 120
+ITEM_FINGER_MODE_SET = 122
 
 # Product Models
 class ProductModels(IntEnum):
@@ -297,7 +322,7 @@ class SesameDevice:
             logger.debug("Waiting for session token publish")
             if self._token_future is None:
                 raise Exception("Disconnected before token received")
-            await asyncio.wait_for(self._token_future, timeout=5.0)
+            await asyncio.wait_for(self._token_future, timeout=15.0)
         except Exception:
             await self.disconnect()
             raise
@@ -340,9 +365,19 @@ class SesameDevice:
             device_time = int.from_bytes(response, "little")
             self.is_logged_in = True
             logger.info("Logged in successfully. Device time: %d", device_time)
+            
+            # Wait for mechanical settings/status to be published to complete login
+            try:
+                await asyncio.wait_for(self._login_event.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timed out waiting for initial mechanical settings/status publish")
+
+            if self._status_cb:
+                self._status_cb(self, self)
+
             return device_time
         except Exception:
-            self._reset_state()
+            await self.disconnect()
             raise
 
     async def disconnect(self) -> None:
@@ -357,6 +392,7 @@ class SesameDevice:
                 self._client = None
 
     def _reset_state(self) -> None:
+        was_logged_in = self.is_logged_in
         self.is_logged_in = False
         self._cipher = None
         self._token_future = None
@@ -368,6 +404,9 @@ class SesameDevice:
                 fut.cancel()
         self._pending_responses.clear()
         self._segmenter = SesameSegmentLayer()
+
+        if was_logged_in and self._status_cb:
+            self._status_cb(self, self)
 
     def _on_disconnect(self, client: BleakClient) -> None:
         del client
@@ -388,7 +427,7 @@ class SesameDevice:
                 return
             except Exception as e:
                 logger.warning("Reconnection attempt %d failed: %s", attempt + 1, e)
-                self._reset_state()
+                await self.disconnect()
         logger.error("Auto-reconnection limit reached. Connection abandoned.")
 
     def _on_gatt_notification(self, characteristic: BleakGATTCharacteristic, data: bytearray) -> None:
@@ -404,7 +443,9 @@ class SesameDevice:
             if not self._cipher:
                 logger.warning("Received encrypted message before login cipher was configured")
                 return
+            logger.info("Session key used: %s", self._cipher._key.hex())
             payload = self._cipher.decrypt_payload(payload)
+            logger.info("Decrypted payload: %s", payload.hex())
 
         if not payload:
             return
@@ -440,7 +481,13 @@ class SesameDevice:
         """To be overridden by subclasses."""
         pass
 
-    async def send_command(self, item_code: int, payload: bytes, encrypt: bool = True) -> bytes:
+    async def send_command(
+        self,
+        item_code: int,
+        payload: bytes,
+        encrypt: bool = True,
+        wait_for_response: bool = True,
+    ) -> bytes:
         """Sends a structured request and awaits the result response."""
         async with self._send_lock:
             # Build request payload: [item_code] + [payload]
@@ -455,6 +502,12 @@ class SesameDevice:
             # The transmission payload should be just msg ([item_code] + [payload]).
             transmission = msg
 
+            if not wait_for_response:
+                packets = self._segmenter.segment_payload(transmission, encrypt)
+                for packet in packets:
+                    await self._client.write_gatt_char(TX_CHAR_UUID, packet, response=False)
+                return b""
+
             fut = asyncio.get_running_loop().create_future()
             self._pending_responses[item_code] = fut
 
@@ -463,7 +516,7 @@ class SesameDevice:
                 for packet in packets:
                     await self._client.write_gatt_char(TX_CHAR_UUID, packet, response=False)
 
-                return await asyncio.wait_for(fut, timeout=2.0)
+                return await asyncio.wait_for(fut, timeout=5.0)
             except asyncio.CancelledError:
                 self._pending_responses.pop(item_code, None)
                 raise Exception("Command cancelled: connection lost")
@@ -484,6 +537,9 @@ class SesameLock(SesameDevice):
         self.is_unlocked = None
         self.is_moving = None
         self.is_battery_critical = None
+        self.lock_position = None
+        self.unlock_position = None
+        self.auto_lock_second = None
 
 
     def on_published(self, item_code: int, payload: bytes) -> None:
@@ -507,9 +563,18 @@ class SesameLock(SesameDevice):
                 self._status_cb(self, self)
 
         elif item_code == ITEM_MECH_SETTING:
+            if len(payload) >= 4:
+                lock_pos, unlock_pos = struct.unpack("<hh", payload[0:4])
+                self.lock_position = lock_pos
+                self.unlock_position = unlock_pos
+            if len(payload) >= 6:
+                self.auto_lock_second = struct.unpack("<H", payload[4:6])[0]
             # We must receive mech setting to complete registration/login flow event
             if not self._login_event.is_set():
                 self._login_event.set()
+
+            if self._status_cb:
+                self._status_cb(self, self)
 
     async def lock(self, history_name: str = "Home Assistant") -> None:
         """Locks the Sesame device."""
@@ -527,7 +592,135 @@ class SesameLock(SesameDevice):
         payload = bytes([len(name_bytes)]) + name_bytes
         await self.send_command(ITEM_UNLOCK, payload, encrypt=True)
 
-class SesameKeypad(SesameDevice):
+    async def configure_lock_position(self, lock_position: int, unlock_position: int) -> None:
+        """Configures the lock and unlock angle thresholds."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        payload = struct.pack("<hh", lock_position, unlock_position)
+        logger.info(
+            "Configuring lock positions [address=%s, lock=%d, unlock=%d]",
+            self.address,
+            lock_position,
+            unlock_position,
+        )
+        await self.send_command(ITEM_MECH_SETTING, payload, encrypt=True)
+
+    async def set_auto_lock_second(self, second: int) -> None:
+        """Configures the automatic locking timer in seconds."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        payload = struct.pack("<H", second)
+        logger.info(
+            "Configuring auto lock duration [address=%s, seconds=%d]",
+            self.address,
+            second,
+        )
+        await self.send_command(ITEM_AUTOLOCK, payload, encrypt=True)
+
+    async def fetch_and_flush_history(self) -> list[dict]:
+        """Fetch and flush all available history records from the lock.
+        
+        Reads the oldest history record, parses it, deletes it from the lock,
+        and repeats until the lock has no more history records.
+        """
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+
+        records = []
+        while True:
+            try:
+                # 0x01: Read oldest history record without deleting
+                payload = await self.send_command(ITEM_HISTORY, b"\x01", encrypt=True)
+                if len(payload) < 48:
+                    logger.warning("Received invalid history payload length: %d", len(payload))
+                    break
+
+                # Parse history record
+                # ssm_history: id(4B) + type(1B) + ts(4B) + mech_status(7B) + param(32B) = 48B
+                record_id, history_type, ts, mech_status, param_bytes = struct.unpack("<IBI7s32s", payload)
+
+                # Parse parameter/tag
+                tag = struct.unpack("<H", param_bytes[0:2])[0]
+                data_length = min(max(0, param_bytes[2]), 29)
+                raw_val = param_bytes[3 : 3 + data_length]
+
+                # Store the record details
+                record = {
+                    "record_id": record_id,
+                    "type": history_type,
+                    "timestamp": ts,
+                    "tag": tag,
+                    "raw_parameter": raw_val.hex(),
+                }
+                records.append(record)
+
+                # Delete the record from the lock to advance the queue
+                await self.send_command(ITEM_HISTORY_DELETE, payload[0:4], encrypt=True)
+
+            except Exception as e:
+                # Command error: 5 means CMD_RESULT_NOT_FOUND (queue empty)
+                if "Command error: 5" in str(e):
+                    logger.debug("History queue is empty (finished fetching)")
+                    break
+                else:
+                    logger.exception("Error during history fetch/flush loop: %s", e)
+                    raise e
+
+        return records
+
+class BaseKeypad:
+    """Generic interface/base class representing a keypad device with passcode/card/fingerprint management."""
+
+    def __init__(self) -> None:
+        self.passcodes = {}
+        self.cards = {}
+        self.fingerprints = {}
+        self.cards_count = 0
+        self.fingerprints_count = 0
+        self.passcodes_count = 0
+
+    async def get_passcodes(self) -> dict[str, dict]:
+        """Fetch/sync passcodes from the keypad."""
+        raise NotImplementedError()
+
+    async def add_passcode(self, code: str, name: str) -> None:
+        """Add a new passcode to the keypad."""
+        raise NotImplementedError()
+
+    async def delete_passcode(self, code_or_id: str) -> None:
+        """Delete an existing passcode from the keypad."""
+        raise NotImplementedError()
+
+    async def update_passcode_name(self, code_or_id: str, name: str) -> None:
+        """Update the nickname of an existing passcode on the keypad."""
+        raise NotImplementedError()
+
+    async def get_cards(self) -> dict[str, dict]:
+        """Fetch/sync NFC cards from the keypad."""
+        raise NotImplementedError()
+
+    async def delete_card(self, card_id: str) -> None:
+        """Delete a card from the keypad."""
+        raise NotImplementedError()
+
+    async def update_card_name(self, card_id: str, name: str) -> None:
+        """Update the nickname of an existing card on the keypad."""
+        raise NotImplementedError()
+
+    async def get_fingerprints(self) -> dict[str, dict]:
+        """Fetch/sync fingerprints from the keypad."""
+        raise NotImplementedError()
+
+    async def delete_fingerprint(self, finger_id: str) -> None:
+        """Delete a fingerprint from the keypad."""
+        raise NotImplementedError()
+
+    async def update_fingerprint_name(self, finger_id: str, name: str) -> None:
+        """Update the nickname of an existing fingerprint on the keypad."""
+        raise NotImplementedError()
+
+
+class SesameKeypad(SesameDevice, BaseKeypad):
     """Subclass representing a Sesame Touch or Sesame Touch Pro keypad."""
 
     def __init__(
@@ -538,22 +731,33 @@ class SesameKeypad(SesameDevice):
         status_callback: Callable[[object, object], None] | None = None,
         reconnect_attempts: int = 0,
     ) -> None:
-        super().__init__(ble_device, ad_data, secret_key, status_callback, reconnect_attempts)
-        self.passcodes = {}
+        SesameDevice.__init__(self, ble_device, ad_data, secret_key, status_callback, reconnect_attempts)
+        BaseKeypad.__init__(self)
         self._temp_passcodes = {}
+        self._temp_cards = {}
+        self._temp_fingerprints = {}
         self._sync_future = None
+        self.scanned_fingerprint = None
+        self.paired_locks = []
+        self.card_registration_mode = False
+        self.fingerprint_registration_mode = False
 
-        self.cards_count = 0
-        self.fingerprints_count = 0
-        self.passcodes_count = 0
         self.battery_voltage = None
         self.battery_percentage = None
         self.is_battery_critical = None
 
     def on_published(self, item_code: int, payload: bytes) -> None:
         if item_code == ITEM_MECH_STATUS:
-            # Struct: battery (uint16_t), cards (int16_t), fingerprints (int16_t), passwords (int16_t), flags (uint8_t)
-            raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhhhB", payload)
+            # Struct varies by payload length:
+            # - 7 bytes: battery (uint16_t), cards (int16_t), fingerprints (uint8_t), passwords (uint8_t), flags (uint8_t)
+            # - 9 bytes: battery (uint16_t), cards (int16_t), fingerprints (uint8_t), passwords (uint8_t), faces (uint8_t), palms (uint8_t), flags (uint8_t)
+            if len(payload) == 7:
+                raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhBBB", payload)
+            elif len(payload) == 9:
+                raw_battery, cards, fingerprints, passwords, _faces, _palms, flags = struct.unpack("<HhBBBBB", payload)
+            else:
+                # Fallback to legacy format if size is unexpected
+                raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhhhB", payload[:9])
             
             self.battery_voltage = raw_battery * 2 / 1000
             self.battery_percentage = calculate_battery_percentage(self.battery_voltage)
@@ -574,24 +778,8 @@ class SesameKeypad(SesameDevice):
             logger.debug("Passcode sync database started")
         
         elif item_code == ITEM_PASSCODE_NOTIFY:
-            idx = 0
-            while idx + 3 <= len(payload):
-                pw_type = payload[idx]
-                pw_id_len = payload[idx + 1]
-                if idx + 2 + pw_id_len > len(payload):
-                    break
-                pw_id = payload[idx + 2 : idx + 2 + pw_id_len]
-                pw_name_len = payload[idx + 2 + pw_id_len]
-                if idx + 2 + pw_id_len + 1 + pw_name_len > len(payload):
-                    break
-                pw_name = payload[idx + 2 + pw_id_len + 1 : idx + 2 + pw_id_len + 1 + pw_name_len].decode("utf-8", errors="replace")
-
-                self._temp_passcodes[pw_id.hex()] = {
-                    "name": pw_name,
-                    "code": "".join(str(b) for b in pw_id),
-                    "type": pw_type,
-                }
-                idx += 2 + pw_id_len + 1 + pw_name_len
+            parsed = self._parse_notify_payload(payload, is_passcode=True)
+            self._temp_passcodes.update(parsed)
         
         elif item_code == ITEM_PASSCODE_LAST:
             self.passcodes = self._temp_passcodes
@@ -599,17 +787,80 @@ class SesameKeypad(SesameDevice):
             if self._sync_future and not self._sync_future.done():
                 self._sync_future.set_result(True)
 
+        elif item_code == ITEM_CARD_FIRST:
+            self._temp_cards = {}
+            logger.debug("Card sync database started")
+
+        elif item_code == ITEM_CARD_NOTIFY:
+            parsed = self._parse_notify_payload(payload, is_passcode=False)
+            self._temp_cards.update(parsed)
+            logger.info("ITEM_CARD_NOTIFY received: parsed=%s, sync_future=%s, card_reg_mode=%s", parsed, self._sync_future, getattr(self, "card_registration_mode", False))
+            for uid, info in parsed.items():
+                is_new = uid not in self.cards
+                logger.info("Checking card notify: uid=%s, is_new=%s, existing_cards=%s", uid, is_new, list(self.cards.keys()))
+                if self._sync_future is None or (getattr(self, "card_registration_mode", False) and is_new):
+                    self.scanned_card = {
+                        "uid": uid,
+                        "type": info["type"]
+                    }
+                    logger.info("Captured scanned card: %s (is_new=%s)", self.scanned_card, is_new)
+                    if self._status_cb:
+                        self._status_cb(self, self)
+                else:
+                    logger.info("Skipped scanned card capture. sync_future=%s, card_reg_mode=%s, is_new=%s", self._sync_future, getattr(self, "card_registration_mode", False), is_new)
+
+        elif item_code == ITEM_CARD_LAST:
+            self.cards = self._temp_cards
+            logger.debug("Card sync database completed")
+            if self._sync_future and not self._sync_future.done():
+                self._sync_future.set_result(True)
+
+        elif item_code == ITEM_FINGER_FIRST:
+            self._temp_fingerprints = {}
+            logger.debug("Fingerprint sync database started")
+
+        elif item_code == ITEM_FINGER_NOTIFY:
+            parsed = self._parse_notify_payload(payload, is_passcode=False)
+            self._temp_fingerprints.update(parsed)
+            logger.info("ITEM_FINGER_NOTIFY received: parsed=%s, sync_future=%s, fp_reg_mode=%s", parsed, self._sync_future, getattr(self, "fingerprint_registration_mode", False))
+            for uid, info in parsed.items():
+                is_new = uid not in self.fingerprints
+                logger.info("Checking fingerprint notify: uid=%s, is_new=%s, existing_fps=%s", uid, is_new, list(self.fingerprints.keys()))
+                if self._sync_future is None or (getattr(self, "fingerprint_registration_mode", False) and is_new):
+                    self.scanned_fingerprint = {
+                        "uid": uid,
+                        "type": info["type"]
+                    }
+                    logger.info("Captured scanned fingerprint: %s (is_new=%s)", self.scanned_fingerprint, is_new)
+                    if self._status_cb:
+                        self._status_cb(self, self)
+                else:
+                    logger.info("Skipped scanned fingerprint capture. sync_future=%s, fp_reg_mode=%s, is_new=%s", self._sync_future, getattr(self, "fingerprint_registration_mode", False), is_new)
+
+        elif item_code == ITEM_FINGER_LAST:
+            self.fingerprints = self._temp_fingerprints
+            logger.debug("Fingerprint sync database completed")
+            if self._sync_future and not self._sync_future.done():
+                self._sync_future.set_result(True)
+
+        elif item_code == ITEM_KEYPAD_LOCK_LIST:
+            self._parse_paired_locks(payload)
+
     async def get_passcodes(self) -> dict[str, dict]:
         """Syncs the passcode database from the keypad and returns it."""
         if not self.is_logged_in:
             raise Exception("Device is not logged in")
 
+        if getattr(self, "passcodes_count", 0) == 0:
+            self.passcodes = {}
+            return self.passcodes
+
         self._sync_future = asyncio.get_running_loop().create_future()
         self._temp_passcodes = {}
 
         try:
-            await self.send_command(ITEM_PASSCODE_GET, b"", encrypt=True)
-            await asyncio.wait_for(self._sync_future, timeout=5.0)
+            await self.send_command(ITEM_PASSCODE_GET, b"", encrypt=True, wait_for_response=False)
+            await asyncio.wait_for(self._sync_future, timeout=15.0)
             return self.passcodes
         finally:
             self._sync_future = None
@@ -671,3 +922,203 @@ class SesameKeypad(SesameDevice):
 
         payload = bytes([len(id_bytes)]) + id_bytes + name_bytes
         await self.send_command(ITEM_PASSCODE_CHANGE, payload, encrypt=True)
+
+    def _parse_notify_payload(self, payload: bytes, is_passcode: bool = False) -> dict[str, dict]:
+        results = {}
+        idx = 0
+        while idx + 3 <= len(payload):
+            item_type = payload[idx]
+            id_len = payload[idx + 1]
+            if idx + 2 + id_len > len(payload):
+                break
+            item_id = payload[idx + 2 : idx + 2 + id_len]
+            name_len = payload[idx + 2 + id_len]
+            if idx + 2 + id_len + 1 + name_len > len(payload):
+                break
+            name_bytes = payload[idx + 2 + id_len + 1 : idx + 2 + id_len + 1 + name_len]
+            logger.info("Parsed notify item: type=%d, id=%s, name_len=%d, raw_name_bytes=%s", item_type, item_id.hex(), name_len, name_bytes.hex())
+            
+            # The Candyhouse official app uses a random UUIDv4 in the name field 
+            # to link the passcode to the actual user name stored in their cloud DB.
+            name = None
+            if len(name_bytes) == 16:
+                try:
+                    val = UUID(bytes=name_bytes)
+                    if val.version == 4:
+                        name = f"App Code ({str(val)[:8]})"
+                except ValueError:
+                    pass
+                    
+            if name is None:
+                name = name_bytes.decode("utf-8", errors="replace").rstrip("\x00")
+
+            if is_passcode:
+                code_str = "".join(str(b) for b in item_id)
+            else:
+                code_str = item_id.hex()
+
+            results[item_id.hex()] = {
+                "name": name,
+                "code": code_str,
+                "type": item_type,
+            }
+            idx += 2 + id_len + 1 + name_len
+        return results
+
+    async def get_cards(self) -> dict[str, dict]:
+        """Syncs the card database from the keypad and returns it."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+
+        if getattr(self, "cards_count", 0) == 0:
+            self.cards = {}
+            return self.cards
+
+        self._sync_future = asyncio.get_running_loop().create_future()
+        self._temp_cards = {}
+
+        try:
+            await self.send_command(ITEM_CARD_GET, b"", encrypt=True, wait_for_response=False)
+            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            return self.cards
+        finally:
+            self._sync_future = None
+
+    async def delete_card(self, card_id: str) -> None:
+        """Deletes a card from the keypad."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        await self.send_command(ITEM_CARD_DELETE, bytes.fromhex(card_id), encrypt=True)
+
+    async def update_card_name(self, card_id: str, name: str) -> None:
+        """Updates the nickname of an existing card."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        id_bytes = bytes.fromhex(card_id)
+        name_bytes = name.encode("utf-8")[:20]
+        payload = bytes([len(id_bytes)]) + id_bytes + name_bytes
+        await self.send_command(ITEM_CARD_CHANGE, payload, encrypt=True)
+
+    async def get_fingerprints(self) -> dict[str, dict]:
+        """Syncs the fingerprint database from the keypad and returns it."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+
+        if getattr(self, "fingerprints_count", 0) == 0:
+            self.fingerprints = {}
+            return self.fingerprints
+
+        self._sync_future = asyncio.get_running_loop().create_future()
+        self._temp_fingerprints = {}
+
+        try:
+            await self.send_command(ITEM_FINGER_GET, b"", encrypt=True, wait_for_response=False)
+            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            return self.fingerprints
+        finally:
+            self._sync_future = None
+
+    async def delete_fingerprint(self, finger_id: str) -> None:
+        """Deletes a fingerprint from the keypad."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        await self.send_command(ITEM_FINGER_DELETE, bytes.fromhex(finger_id), encrypt=True)
+
+    async def update_fingerprint_name(self, finger_id: str, name: str) -> None:
+        """Updates the nickname of an existing fingerprint."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        id_bytes = bytes.fromhex(finger_id)
+        name_bytes = name.encode("utf-8")[:20]
+        payload = bytes([len(id_bytes)]) + id_bytes + name_bytes
+        await self.send_command(ITEM_FINGER_CHANGE, payload, encrypt=True)
+
+    async def set_card_registration_mode(self, active: bool) -> None:
+        """Sets the keypad card mode: True for Add Mode, False for Verification Mode."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        mode = 0x01 if active else 0x00
+        await self.send_command(ITEM_CARD_MODE_SET, bytes([mode]), encrypt=True)
+        self.card_registration_mode = active
+
+    async def set_fingerprint_registration_mode(self, active: bool) -> None:
+        """Sets the keypad fingerprint mode: True for Add Mode, False for Verification Mode."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        mode = 0x01 if active else 0x00
+        await self.send_command(ITEM_FINGER_MODE_SET, bytes([mode]), encrypt=True)
+        self.fingerprint_registration_mode = active
+
+    async def add_card(self, card_id: str, name: str, card_type: int = 0x80) -> None:
+        """Registers/Adds a card to the keypad database."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+            
+        card_id_bytes = bytes.fromhex(card_id)
+        card_name_bytes = name.encode("utf-8")[:20]
+        
+        payload = bytearray(40)
+        payload[0] = 0xF0  # CARD_DATA_USED
+        payload[1] = card_type
+        payload[2] = len(card_id_bytes)
+        payload[3 : 3 + len(card_id_bytes)] = card_id_bytes
+        payload[19] = len(card_name_bytes)
+        payload[20 : 20 + len(card_name_bytes)] = card_name_bytes
+        
+        await self.send_command(ITEM_CARD_ADD, bytes(payload), encrypt=True)
+
+    def _parse_paired_locks(self, payload: bytes) -> None:
+        """Parses the list of paired locks published by the keypad."""
+        if len(payload) < 69:
+            return
+        
+        paired = []
+        for i in range(3):
+            offset = i * 23
+            name_bytes = payload[offset : offset + 22]
+            status_byte = payload[offset + 22]
+            
+            uuid_obj = self._parse_base64_uuid(name_bytes)
+            if uuid_obj and status_byte != 0:
+                paired.append({
+                    "uuid": str(uuid_obj),
+                    "status": status_byte,
+                })
+        self.paired_locks = paired
+        logger.info("Parsed paired locks list: %s", self.paired_locks)
+        if self._status_cb:
+            self._status_cb(self, self)
+
+    def _parse_base64_uuid(self, name_bytes: bytes) -> UUID | None:
+        """Decodes the 22-byte paddingless base64 representation of a UUID or raw binary UUID."""
+        binary_bytes = name_bytes.rstrip(b"\x00")
+        if len(binary_bytes) == 16:
+            try:
+                return UUID(bytes=binary_bytes)
+            except ValueError:
+                pass
+
+        try:
+            clean = name_bytes.rstrip(b"\x00").decode("ascii").strip()
+            if not clean:
+                return None
+            padding = "=" * (4 - len(clean) % 4)
+            uuid_bytes = base64.b64decode(clean + padding)
+            if len(uuid_bytes) == 16:
+                return UUID(bytes=uuid_bytes)
+        except Exception:
+            pass
+        return None
+
+    async def add_paired_lock(self, device_uuid: UUID, secret_key: bytes) -> None:
+        """Add/Pair a Sesame Lock to the keypad."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        payload = device_uuid.bytes + secret_key
+        await self.send_command(ITEM_ADD_SESAME, payload, encrypt=True)
+
+    async def remove_paired_lock(self, device_uuid: UUID) -> None:
+        """Remove/Unpair a Sesame Lock from the keypad."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        await self.send_command(ITEM_REMOVE_SESAME, device_uuid.bytes, encrypt=True)

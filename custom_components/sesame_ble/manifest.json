@@ -9,6 +9,11 @@
     "pyzbar>=0.1.9",
     "Pillow>=10.0.0"
   ],
-  "dependencies": ["bluetooth"],
+  "dependencies": ["bluetooth", "frontend", "panel_custom"],
+  "bluetooth": [
+    {
+      "manufacturer_id": 1370
+    }
+  ],
   "version": "1.0.0"
 }

@@ -6,7 +6,7 @@ from uuid import UUID
 from homeassistant.helpers.device_registry import format_mac
 from sesame_ble.config_flow import SesameBLEConfigFlow
 from sesame_ble.const import CONF_MODEL, CONF_QR_URL, CONF_SECRET_KEY, CONF_DEVICE_UUID, DOMAIN
-from sesame_ble.sesame_client import COMPANY_ID, ProductModels, SesameQRCode
+from sesame_ble.sesame_client import COMPANY_ID, ProductModels, SesameQRCode, SesameAdData
 
 TEST_UUID = UUID("01234567-89ab-cdef-0123-456789abcdef")
 
@@ -28,13 +28,13 @@ async def test_flow_manual_success() -> None:
         CONF_MODEL: "SESAME5",
     }
 
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_manual(user_input=user_input)
 
     assert result == "entry_created"
     flow.async_set_unique_id.assert_called_once_with(format_mac("AA:BB:CC:DD:EE:FF"))
     flow._abort_if_unique_id_configured.assert_called_once()
     flow.async_create_entry.assert_called_once_with(
-        title="Sesame SESAME5 (EE:FF)",
+        title="Sesame 5 (EE:FF)",
         data={
             "mac_address": "AA:BB:CC:DD:EE:FF",
             CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
@@ -56,24 +56,22 @@ async def test_flow_manual_invalid_key() -> None:
         CONF_SECRET_KEY: "invalidhexcharacters",
         CONF_MODEL: "SESAME5",
     }
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_manual(user_input=user_input)
     assert result == "form_displayed"
     flow.async_show_form.assert_called_with(
-        step_id="user",
+        step_id="manual",
         data_schema=ANY,
         errors={CONF_SECRET_KEY: "invalid_secret_key"},
-        description_placeholders=ANY,
     )
 
     # 2. Invalid key (wrong length - not 16 bytes/32 chars)
     user_input[CONF_SECRET_KEY] = "0123456789abcdef"
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_manual(user_input=user_input)
     assert result == "form_displayed"
     flow.async_show_form.assert_called_with(
-        step_id="user",
+        step_id="manual",
         data_schema=ANY,
         errors={CONF_SECRET_KEY: "invalid_secret_key"},
-        description_placeholders=ANY,
     )
 
 
@@ -106,7 +104,7 @@ async def test_flow_qr_code_with_discovered_mac(mock_discovered) -> None:
     mock_discovered.return_value = [mock_service_info]
 
     user_input = {CONF_QR_URL: qr_url}
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_import_qr(user_input=user_input)
 
     assert result == "entry_created"
     flow.async_set_unique_id.assert_called_once_with(format_mac("AA:BB:CC:DD:EE:FF"))
@@ -146,7 +144,7 @@ async def test_flow_qr_code_fallback_select_address(mock_discovered) -> None:
     flow.async_step_select_address = AsyncMock(return_value="select_address_step")
 
     user_input = {CONF_QR_URL: qr_url}
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_import_qr(user_input=user_input)
 
     assert result == "select_address_step"
     assert flow._qr_code_info == qr
@@ -198,15 +196,16 @@ async def test_flow_qr_code_invalid_url() -> None:
     flow.async_show_form = MagicMock(return_value="form_displayed")
 
     user_input = {CONF_QR_URL: "invalid_url_without_ssm_prefix"}
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_import_qr(user_input=user_input)
 
     assert result == "form_displayed"
     flow.async_show_form.assert_called_once_with(
-        step_id="user",
+        step_id="import_qr",
         data_schema=ANY,
         errors={"base": "invalid_qr_code"},
-        description_placeholders=ANY,
     )
+
+
 @pytest.mark.asyncio
 @patch("sesame_ble.config_flow.async_discovered_service_info")
 @patch("PIL.Image.open")
@@ -249,7 +248,7 @@ async def test_flow_qr_image_success(mock_decode, mock_image_open, mock_discover
     mock_discovered.return_value = [mock_service_info]
 
     user_input = {"qr_code_image": "some_file_id"}
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_import_qr(user_input=user_input)
 
     assert result == "entry_created"
     flow.async_set_unique_id.assert_called_once_with(format_mac("AA:BB:CC:DD:EE:FF"))
@@ -283,14 +282,13 @@ async def test_flow_qr_image_no_qr(mock_decode, mock_image_open) -> None:
     mock_decode.return_value = []
 
     user_input = {"qr_code_image": "some_file_id"}
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_import_qr(user_input=user_input)
 
     assert result == "form_displayed"
     flow.async_show_form.assert_called_once_with(
-        step_id="user",
+        step_id="import_qr",
         data_schema=ANY,
         errors={"base": "invalid_qr_code"},
-        description_placeholders=ANY,
     )
 
 
@@ -314,14 +312,13 @@ async def test_flow_qr_image_invalid_url(mock_decode, mock_image_open) -> None:
     mock_decode.return_value = [mock_obj]
 
     user_input = {"qr_code_image": "some_file_id"}
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_import_qr(user_input=user_input)
 
     assert result == "form_displayed"
     flow.async_show_form.assert_called_once_with(
-        step_id="user",
+        step_id="import_qr",
         data_schema=ANY,
         errors={"base": "invalid_qr_code"},
-        description_placeholders=ANY,
     )
 
 
@@ -342,16 +339,173 @@ async def test_flow_qr_image_exception(mock_process) -> None:
     mock_process.side_effect = Exception("File could not be opened")
 
     user_input = {"qr_code_image": "some_file_id"}
-    result = await flow.async_step_user(user_input=user_input)
+    result = await flow.async_step_import_qr(user_input=user_input)
 
     assert result == "form_displayed"
     flow.async_show_form.assert_called_once_with(
-        step_id="user",
+        step_id="import_qr",
         data_schema=ANY,
         errors={"base": "invalid_qr_code"},
-        description_placeholders=ANY,
     )
 
+
+@pytest.mark.asyncio
+async def test_flow_menu_user_step() -> None:
+    """Tests that the initial user step presents a menu choice."""
+    flow = SesameBLEConfigFlow()
+    flow.async_show_menu = MagicMock(return_value="menu_displayed")
+    
+    result = await flow.async_step_user()
+    assert result == "menu_displayed"
+    flow.async_show_menu.assert_called_once_with(
+        step_id="user",
+        menu_options=["discover_unregistered", "import_qr", "manual"]
+    )
+
+
+@pytest.mark.asyncio
+@patch("sesame_ble.config_flow.async_discovered_service_info")
+async def test_discover_unregistered_no_devices(mock_discovered) -> None:
+    """Tests step_discover_unregistered when no unregistered Sesame devices are found."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_show_form = MagicMock(return_value="form_displayed")
+
+    # Mock discover to return nothing
+    mock_discovered.return_value = []
+
+    result = await flow.async_step_discover_unregistered()
+    assert result == "form_displayed"
+    flow.async_show_form.assert_called_once_with(
+        step_id="discover_unregistered",
+        data_schema=ANY,
+        errors={"base": "no_unregistered_devices"}
+    )
+
+
+@pytest.mark.asyncio
+@patch("sesame_ble.config_flow.async_discovered_service_info")
+async def test_discover_unregistered_success(mock_discovered) -> None:
+    """Tests successful BLE enrollment of discovered unregistered device."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    # Unregistered Sesame 5 advertisement data
+    mfg_data = struct.pack("<HB16s", 5, 0, TEST_UUID.bytes) # 0 = is_registered is False
+    mock_service_info = MagicMock()
+    mock_service_info.address = "AA:BB:CC:DD:EE:FF"
+    mock_service_info.name = "My New Sesame"
+    mock_service_info.device = MagicMock()
+    mock_service_info.advertisement.manufacturer_data = {COMPANY_ID: mfg_data}
+    mock_discovered.return_value = [mock_service_info]
+
+    # Mock the SesameDevice register method in config_flow
+    with patch("sesame_ble.config_flow.SesameDevice") as mock_device_class:
+        mock_device = MagicMock()
+        mock_device.connect = AsyncMock()
+        mock_device.register = AsyncMock(return_value="0123456789abcdef0123456789abcdef")
+        mock_device.disconnect = AsyncMock()
+        mock_device_class.return_value = mock_device
+
+        # Form submission
+        user_input = {"mac_address": "AA:BB:CC:DD:EE:FF"}
+        result = await flow.async_step_discover_unregistered(user_input=user_input)
+
+        assert result == "entry_created"
+        mock_device.connect.assert_called_once()
+        mock_device.register.assert_called_once()
+        mock_device.disconnect.assert_called_once()
+        flow.async_create_entry.assert_called_once_with(
+            title="Sesame 5 (EE:FF)",
+            data={
+                "mac_address": "AA:BB:CC:DD:EE:FF",
+                CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+                CONF_MODEL: "SESAME5",
+                CONF_DEVICE_UUID: str(TEST_UUID),
+            }
+        )
+
+
+@pytest.mark.asyncio
+@patch("sesame_ble.config_flow.async_discovered_service_info")
+async def test_bluetooth_step_routing_registered(mock_discovered) -> None:
+    """Tests routing in async_step_bluetooth when device is already registered."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_step_bluetooth_confirm = AsyncMock(return_value="confirm_step")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    mfg_data = struct.pack("<HB16s", 5, 1, TEST_UUID.bytes) # is_registered = True
+    discovery_info = MagicMock()
+    discovery_info.address = "AA:BB:CC:DD:EE:FF"
+    discovery_info.advertisement.manufacturer_data = {COMPANY_ID: mfg_data}
+
+    result = await flow.async_step_bluetooth(discovery_info)
+    assert result == "confirm_step"
+    assert flow._mac_address == "AA:BB:CC:DD:EE:FF"
+    flow.async_step_bluetooth_confirm.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("sesame_ble.config_flow.async_discovered_service_info")
+async def test_bluetooth_step_routing_unregistered(mock_discovered) -> None:
+    """Tests routing in async_step_bluetooth when device is unregistered (starts BLE registration flow)."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_step_bluetooth_register_confirm = AsyncMock(return_value="register_confirm_step")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    mfg_data = struct.pack("<HB16s", 5, 0, TEST_UUID.bytes) # is_registered = False
+    discovery_info = MagicMock()
+    discovery_info.address = "AA:BB:CC:DD:EE:FF"
+    discovery_info.advertisement.manufacturer_data = {COMPANY_ID: mfg_data}
+
+    result = await flow.async_step_bluetooth(discovery_info)
+    assert result == "register_confirm_step"
+    assert flow._mac_address == "AA:BB:CC:DD:EE:FF"
+    flow.async_step_bluetooth_register_confirm.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_bluetooth_register_confirm_success() -> None:
+    """Tests successful auto-discovery registration confirmation."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    # Prepopulate discovery variables
+    flow._mac_address = "AA:BB:CC:DD:EE:FF"
+    mfg_data = struct.pack("<HB16s", 5, 0, TEST_UUID.bytes)
+    flow._sesame_adv_data = SesameAdData.decode(mfg_data)
+    flow._discovery_info = MagicMock()
+    flow._discovery_info.device = MagicMock()
+
+    with patch("sesame_ble.config_flow.SesameDevice") as mock_device_class:
+        mock_device = MagicMock()
+        mock_device.connect = AsyncMock()
+        mock_device.register = AsyncMock(return_value="0123456789abcdef0123456789abcdef")
+        mock_device.disconnect = AsyncMock()
+        mock_device_class.return_value = mock_device
+
+        result = await flow.async_step_bluetooth_register_confirm(user_input={})
+
+        assert result == "entry_created"
+        flow.async_create_entry.assert_called_once_with(
+            title="Sesame 5 (EE:FF)",
+            data={
+                "mac_address": "AA:BB:CC:DD:EE:FF",
+                CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+                CONF_MODEL: "SESAME5",
+                CONF_DEVICE_UUID: str(TEST_UUID),
+            }
+        )
 
 
 def test_translations_completeness() -> None:
@@ -374,7 +528,7 @@ def test_translations_completeness() -> None:
     assert "abort" in config_data
 
     # Check specific errors returned in flow exist in strings.json
-    expected_errors = ["invalid_qr_code", "invalid_secret_key", "no_devices_found"]
+    expected_errors = ["invalid_qr_code", "invalid_secret_key", "no_devices_found", "no_unregistered_devices", "device_not_found", "registration_failed"]
     for err in expected_errors:
         assert err in config_data["error"], f"Error '{err}' is not defined in strings.json!"
 

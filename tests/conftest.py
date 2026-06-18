@@ -20,6 +20,8 @@ class MockConfigFlow:
         pass
     def async_abort(self, *args, **kwargs):
         pass
+    def async_show_menu(self, *args, **kwargs):
+        pass
 
 class MockEntity:
     @property
@@ -33,6 +35,9 @@ class MockLockEntity(MockEntity):
     pass
 
 class MockSensorEntity(MockEntity):
+    pass
+
+class MockButtonEntity(MockEntity):
     pass
 
 # Helper to build mock modules and link them in sys.modules
@@ -103,12 +108,37 @@ file_upload = mock_module("homeassistant.components.file_upload", {
     "process_uploaded_file": mock_process_uploaded_file,
 })
 
+class MockStore:
+    def __init__(self, hass, version, key, **kwargs):
+        self.hass = hass
+        self.version = version
+        self.key = key
+        # We can store the data inside the config entry or hass object to simulate persistence
+        self._data = {}
+
+    async def async_load(self):
+        return self._data
+
+    async def async_save(self, data):
+        self._data = data
+
+storage = mock_module("homeassistant.helpers.storage", {
+    "Store": MockStore,
+})
+
 helpers = mock_module("homeassistant.helpers", {
     "device_registry": device_registry,
     "entity": entity,
     "entity_platform": entity_platform,
     "selector": selector,
+    "storage": storage,
 })
+
+class MockNumberEntity(MockEntity):
+    pass
+
+class MockSelectEntity(MockEntity):
+    pass
 
 lock = mock_module("homeassistant.components.lock", {
     "LockEntity": MockLockEntity,
@@ -118,18 +148,42 @@ sensor = mock_module("homeassistant.components.sensor", {
     "SensorDeviceClass": MagicMock(),
     "SensorStateClass": MagicMock(),
 })
+button = mock_module("homeassistant.components.button", {
+    "ButtonEntity": MockButtonEntity,
+})
+number = mock_module("homeassistant.components.number", {
+    "NumberEntity": MockNumberEntity,
+})
+select = mock_module("homeassistant.components.select", {
+    "SelectEntity": MockSelectEntity,
+})
 bluetooth_mock = mock_module("homeassistant.components.bluetooth", {
     "async_discovered_service_info": MagicMock(),
     "async_ble_device_from_address": MagicMock(),
     "async_get_advertisement_data": MagicMock(),
     "BluetoothServiceInfoBleak": MagicMock,
 })
+class MockHomeAssistantView:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def json(self, data, status=200, status_code=None):
+        from aiohttp import web
+        return web.json_response(data, status=status_code if status_code is not None else status)
+
+http = mock_module("homeassistant.components.http", {
+    "HomeAssistantView": MockHomeAssistantView,
+})
 
 components = mock_module("homeassistant.components", {
     "lock": lock,
     "sensor": sensor,
+    "button": button,
+    "number": number,
+    "select": select,
     "bluetooth": bluetooth_mock,
     "file_upload": file_upload,
+    "http": http,
 })
 
 homeassistant = mock_module("homeassistant", {

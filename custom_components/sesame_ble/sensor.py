@@ -37,7 +37,15 @@ async def async_setup_entry(
         entities.extend([
             SesameTouchCardSensor(wrapper),
             SesameTouchFingerprintSensor(wrapper),
-            SesameTouchPasscodeSensor(wrapper)
+            SesameTouchPasscodeSensor(wrapper),
+            SesameTouchPairedLocksSensor(wrapper),
+        ])
+    else:
+        # Lock specific diagnostic sensors
+        entities.extend([
+            SesameLockLockedPositionSensor(wrapper),
+            SesameLockUnlockedPositionSensor(wrapper),
+            SesameLockCurrentPositionSensor(wrapper),
         ])
 
     async_add_entities(entities)
@@ -189,3 +197,87 @@ class SesameTouchPasscodeSensor(SesameBaseSensor):
         if hasattr(self.device, "passcodes"):
             self._passcodes_list = self.device.passcodes
         return {"passcodes": self._passcodes_list}
+
+
+class SesameLockLockedPositionSensor(SesameBaseSensor):
+    """Sensor to show the calibrated locked position angle."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the locked position sensor."""
+        super().__init__(wrapper, "Locked Position", "locked_position")
+        self._attr_native_unit_of_measurement = "°"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_icon = "mdi:lock"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the locked position angle."""
+        try:
+            return self.device.lock_position
+        except Exception:
+            return None
+
+
+class SesameLockUnlockedPositionSensor(SesameBaseSensor):
+    """Sensor to show the calibrated unlocked position angle."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the unlocked position sensor."""
+        super().__init__(wrapper, "Unlocked Position", "unlocked_position")
+        self._attr_native_unit_of_measurement = "°"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_icon = "mdi:lock-open"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the unlocked position angle."""
+        try:
+            return self.device.unlock_position
+        except Exception:
+            return None
+
+
+class SesameLockCurrentPositionSensor(SesameBaseSensor):
+    """Sensor to show the current lock angle."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the current position sensor."""
+        super().__init__(wrapper, "Current Angle", "current_angle")
+        self._attr_native_unit_of_measurement = "°"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_icon = "mdi:rotate-right"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the current position angle."""
+        try:
+            return self.device.current_angle
+        except Exception:
+            return None
+
+
+class SesameTouchPairedLocksSensor(SesameBaseSensor):
+    """Paired locks count and details sensor for Sesame Touch."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the paired locks sensor."""
+        super().__init__(wrapper, "Paired Locks", "paired_locks")
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_icon = "mdi:lock-link"
+        self._paired_locks: list[dict[str, Any]] = []
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the number of paired locks."""
+        try:
+            return len(self.device.paired_locks)
+        except Exception:
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the list of paired locks as attributes."""
+        if hasattr(self.device, "paired_locks"):
+            self._paired_locks = self.device.paired_locks
+        return {"paired_locks": self._paired_locks}

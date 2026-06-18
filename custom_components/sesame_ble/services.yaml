@@ -68,3 +68,41 @@ update_passcode:
       example: "New Nickname"
       selector:
         text:
+
+pair_lock:
+  name: Pair Lock
+  description: Pairs a Sesame Lock to the Sesame Touch keypad.
+  fields:
+    device_id:
+      name: Keypad Device
+      description: The Sesame Touch keypad device.
+      required: true
+      selector:
+        device:
+          integration: sesame_ble
+    lock_device_id:
+      name: Lock Device
+      description: The Sesame Lock device configured in Home Assistant to pair.
+      required: true
+      selector:
+        device:
+          integration: sesame_ble
+
+unpair_lock:
+  name: Unpair Lock
+  description: Unpairs a Sesame Lock from the Sesame Touch keypad.
+  fields:
+    device_id:
+      name: Keypad Device
+      description: The Sesame Touch keypad device.
+      required: true
+      selector:
+        device:
+          integration: sesame_ble
+    lock_uuid:
+      name: Lock UUID
+      description: The UUID of the Sesame Lock to unpair (e.g. "01234567-89ab-cdef-0123-456789abcdef").
+      required: true
+      example: "01234567-89ab-cdef-0123-456789abcdef"
+      selector:
+        text:

@@ -13,6 +13,7 @@ from .device import (
     SesameDevice,
     SesameLock,
     SesameKeypad,
+    BaseKeypad,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "SesameDevice",
     "SesameLock",
     "SesameKeypad",
+    "BaseKeypad",
 ]

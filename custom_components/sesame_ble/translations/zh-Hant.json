@@ -1,16 +1,33 @@
 {
   "config": {
-    "flow_title": "Candy House Sesame BLE",
+    "flow_title": "{name}",
     "step": {
       "user": {
         "title": "設定 Sesame BLE",
-        "description": "輸入您的 Sesame 門鎖或鑰匙盒的憑據。您可以貼上官方 App 分享的 QR Code 網址（ssm://）以自動填入詳細資訊，或是手動進行設定。",
+        "description": "輸入您的 Sesame 門鎖或鑰匙盒的憑據。您可以貼上官方 App 分享的 QR Code 網址（ssm://）以自動填入詳細資訊，或是手動進行設定。"
+      },
+      "discover_unregistered": {
+        "title": "Register New Device",
+        "description": "Select the unregistered Sesame device nearby to automatically register and configure it. Make sure the device is in reset mode (press the reset button until the LED flashes).",
         "data": {
-          "qr_code_image": "QR Code 圖片上傳",
-          "qr_url": "QR Code 設定網址",
-          "mac_address": "藍牙 MAC 位址",
-          "secret_key": "金鑰（16 位元組 / 32 位十六進制字元）",
-          "model": "產品型號"
+          "mac_address": "Select Device"
+        }
+      },
+      "import_qr": {
+        "title": "Import via QR Code",
+        "description": "Paste the shared ssm:// URL or upload a QR Code image from the official app to configure your Sesame device.",
+        "data": {
+          "qr_code_image": "QR Code Image Upload",
+          "qr_url": "QR Code Setup URL"
+        }
+      },
+      "manual": {
+        "title": "Manual Setup",
+        "description": "Enter the MAC Address, Secret Key, and Product Model of your Sesame device manually.",
+        "data": {
+          "mac_address": "Bluetooth MAC Address",
+          "secret_key": "Secret Key (16 bytes/32 hex characters)",
+          "model": "Product Model"
         }
       },
       "select_address": {
@@ -26,12 +43,19 @@
         "data": {
           "secret_key": "金鑰"
         }
+      },
+      "bluetooth_register_confirm": {
+        "title": "Register Discovered Device",
+        "description": "We discovered an unregistered Sesame {model} ({mac}) nearby. Do you want to pair and register it automatically?"
       }
     },
     "error": {
       "invalid_qr_code": "解析 QR Code 網址失敗。請確保其為有效的 ssm:// 網址。",
       "invalid_secret_key": "金鑰格式無效。必須剛好是 32 個十六進制字元。",
-      "no_devices_found": "附近未找到 Sesame 裝置。請確保裝置已開啟電源且在範圍內。"
+      "no_devices_found": "附近未找到 Sesame 裝置。請確保裝置已開啟電源且在範圍內。",
+      "no_unregistered_devices": "No unregistered Sesame devices found nearby. Make sure the device is in reset mode (LED flashing) and try again.",
+      "device_not_found": "The selected device was not found or has stopped advertising.",
+      "registration_failed": "BLE registration handshake failed. Verify that the device is in reset mode and try again."
     },
     "abort": {
       "already_configured": "裝置已設定完成",

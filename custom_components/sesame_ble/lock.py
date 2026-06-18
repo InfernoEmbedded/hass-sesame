@@ -95,6 +95,15 @@ class SesameBLELock(LockEntity):
             connections={(dr.CONNECTION_BLUETOOTH, self.wrapper.ble_device.address)},
         )
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes."""
+        return {
+            "current_angle": self.sesame.current_angle,
+            "lock_position": self.sesame.lock_position,
+            "unlock_position": self.sesame.unlock_position,
+        }
+
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the device."""
         try:
