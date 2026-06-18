@@ -243,8 +243,8 @@ async def test_diagnostic_angle_sensors(mock_bluetooth) -> None:
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
 
-    # Verify battery sensor + 3 angle sensors
-    assert len(entities) == 4
+    # Verify battery sensor + 3 angle sensors + RSSI + Connection
+    assert len(entities) == 6
 
     locked_sensor = next(s for s in entities if s.unique_id == "test_mac_sensors_locked_position")
     unlocked_sensor = next(s for s in entities if s.unique_id == "test_mac_sensors_unlocked_position")
@@ -394,8 +394,8 @@ async def test_keypad_paired_locks_sensor_and_services(mock_bluetooth) -> None:
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
     
-    # 5 sensors for keypad: Battery + Card + Fingerprint + Passcode + Paired Locks = 5 entities!
-    assert len(entities) == 5
+    # 7 sensors for keypad: Battery + Card + Fingerprint + Passcode + Paired Locks + RSSI + Connection = 7 entities!
+    assert len(entities) == 7
 
     paired_sensor = next(s for s in entities if s.unique_id == "test_mac_keypad_services_paired_locks")
     assert paired_sensor.name == "Paired Locks"

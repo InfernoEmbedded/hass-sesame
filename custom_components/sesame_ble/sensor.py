@@ -30,7 +30,9 @@ async def async_setup_entry(
     """Set up sensor entities for Candy House Sesame BLE device."""
     wrapper: SesameDeviceWrapper = hass.data[DOMAIN][entry.entry_id]
     
-    entities = [SesameBatterySensor(wrapper)]
+    entities = [
+        SesameBatterySensor(wrapper),
+    ]
     
     # Keypad specific sensors
     if "TOUCH" in wrapper.model_name:
@@ -47,6 +49,12 @@ async def async_setup_entry(
             SesameLockUnlockedPositionSensor(wrapper),
             SesameLockCurrentPositionSensor(wrapper),
         ])
+
+    # Append diagnostic/diagnostics sensors at the end
+    entities.extend([
+        SesameRSSISensor(wrapper),
+        SesameConnectionSensor(wrapper),
+    ])
 
     async_add_entities(entities)
 
@@ -281,3 +289,59 @@ class SesameTouchPairedLocksSensor(SesameBaseSensor):
         if hasattr(self.device, "paired_locks"):
             self._paired_locks = self.device.paired_locks
         return {"paired_locks": self._paired_locks}
+
+
+class SesameRSSISensor(SesameBaseSensor):
+    """RSSI sensor for Sesame BLE devices."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the RSSI sensor."""
+        super().__init__(wrapper, "Signal Strength", "rssi")
+        self._attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_native_unit_of_measurement = "dBm"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def available(self) -> bool:
+        """RSSI sensor is always available."""
+        return True
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the RSSI value."""
+        from homeassistant.components import bluetooth
+        service_info = bluetooth.async_last_service_info(
+            self.wrapper.hass, self.wrapper.ble_device.address
+        )
+        if service_info:
+            return service_info.rssi
+        return None
+
+
+class SesameConnectionSensor(SesameBaseSensor):
+    """Sensor to report connection status."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the connection sensor."""
+        super().__init__(wrapper, "Connection State", "connection_state")
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_icon = "mdi:bluetooth-connect"
+
+    @property
+    def available(self) -> bool:
+        """Connection sensor is always available."""
+        return True
+
+    @property
+    def native_value(self) -> str:
+        """Return the connection state."""
+        return "connected" if self.device.is_connected else "disconnected"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return connection attributes."""
+        return {
+            "is_connected": self.device.is_connected,
+            "is_logged_in": self.device.is_logged_in,
+        }

@@ -91,7 +91,7 @@ async def test_lock_setup_and_entities(mock_bluetooth) -> None:
     
     async_add_sensors.assert_called_once()
     sensors = async_add_sensors.call_args[0][0]
-    assert len(sensors) == 4
+    assert len(sensors) == 6
     
     battery_sensor = sensors[0]
     assert battery_sensor.name == "Battery"
@@ -147,7 +147,7 @@ async def test_keypad_setup_and_entities(mock_bluetooth) -> None:
     
     async_add_sensors.assert_called_once()
     sensors = async_add_sensors.call_args[0][0]
-    assert len(sensors) == 5
+    assert len(sensors) == 7
     
     battery_sensor = sensors[0]
     card_sensor = sensors[1]
@@ -228,7 +228,7 @@ async def test_touch_2_pro_setup_and_entities(mock_bluetooth) -> None:
     
     async_add_sensors.assert_called_once()
     sensors = async_add_sensors.call_args[0][0]
-    assert len(sensors) == 5
+    assert len(sensors) == 7
     
     battery_sensor = sensors[0]
     card_sensor = sensors[1]
@@ -625,6 +625,7 @@ async def test_api_pairing_and_history_views():
     ]
 
     keypad_wrapper = MagicMock()
+    keypad_wrapper.model_name = "SESAME_TOUCH"
     keypad_wrapper.device = mock_keypad
     keypad_wrapper.entry.title = "Test Keypad"
     keypad_wrapper.logical_cards = {}
@@ -638,6 +639,7 @@ async def test_api_pairing_and_history_views():
     mock_lock.fetch_and_flush_history = AsyncMock()
 
     lock_wrapper = MagicMock()
+    lock_wrapper.hass = hass
     lock_wrapper.device = mock_lock
     lock_wrapper.fetch_and_flush_history = AsyncMock()
     lock_wrapper.model_name = "SESAME5"
@@ -648,6 +650,11 @@ async def test_api_pairing_and_history_views():
     mock_adv = MagicMock()
     mock_adv.device_uuid = UUID("11200509-0108-0802-b700-6500ffffffff")
     lock_wrapper.adv_data = mock_adv
+
+    # Bind resolve_history_record
+    lock_wrapper.resolve_history_record = sesame_ble.SesameDeviceWrapper.resolve_history_record.__get__(
+        lock_wrapper, sesame_ble.SesameDeviceWrapper
+    )
     
     lock_wrapper.history_records = [
         {
@@ -708,3 +715,226 @@ async def test_api_pairing_and_history_views():
     resp_unpair = await unpair_view.post(req_unpair)
     assert resp_unpair.status == 200
     mock_keypad.remove_paired_lock.assert_awaited_once_with(UUID("11200509-0108-0802-b700-6500ffffffff"))
+
+
+@pytest.mark.asyncio
+async def test_passcode_schedules_weekly_and_daily():
+    """Test weekly days and daily time range schedule evaluations in BaseKeypad."""
+    from sesame_ble.sesame_client.device import BaseKeypad
+    import datetime
+
+    class MockKeypad(BaseKeypad):
+        passcodes = {}
+        cards = {}
+        fingerprints = {}
+
+    keypad = MockKeypad()
+    keypad.add_passcode = AsyncMock()
+    keypad.delete_passcode = AsyncMock()
+
+    # Current time is Thursday, 14:30
+    fixed_now = datetime.datetime(2026, 6, 18, 14, 30) # Thursday is weekday 3
+
+    with patch("datetime.datetime") as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        mock_dt.fromisoformat = datetime.datetime.fromisoformat
+        mock_dt.strptime = datetime.datetime.strptime
+        mock_dt.time = datetime.time
+
+        # 1. Weekly schedule matches (Thursday=3)
+        logical_passcodes = {
+            "uid1": {
+                "name": "Matching Weekly",
+                "code": "1234",
+                "days": [3], # Thursday
+                "time_start": "14:00",
+                "time_end": "15:00",
+            },
+            "uid2": {
+                "name": "Mismatched Weekly",
+                "code": "5678",
+                "days": [0, 1, 2], # Mon, Tue, Wed
+                "time_start": "14:00",
+                "time_end": "15:00",
+            },
+            "uid3": {
+                "name": "Mismatched Daily",
+                "code": "9012",
+                "days": [3],
+                "time_start": "15:00",
+                "time_end": "16:00",
+            }
+        }
+
+        # Setup current physically active passcodes
+        keypad.passcodes = {
+            "uid2": {"name": "Mismatched Weekly", "code": "5678"},
+        }
+
+        # Run schedule evaluation
+        changed = await keypad.apply_passcode_schedules(logical_passcodes)
+        assert changed is True
+        
+        # Matches weekly should be added
+        keypad.add_passcode.assert_awaited_once_with("1234", "Matching Weekly")
+        # Mismatched weekly should be deleted
+        keypad.delete_passcode.assert_awaited_once_with("uid2")
+
+
+@pytest.mark.asyncio
+async def test_otp_detection_and_deletion():
+    """Test OTP passcode detection and deletion in fetch_and_flush_history."""
+    import time
+    import sesame_ble
+
+    hass = MagicMock()
+    # Mock states for Person
+    hass.states.get.return_value = None
+    
+    # Pair keypad wrapper
+    keypad_wrapper = MagicMock()
+    keypad_wrapper.logical_passcodes = {
+        "otp_uid": {
+            "name": "OTP Code",
+            "code": "1234",
+            "one_time": True,
+        }
+    }
+    keypad_wrapper.recently_deleted_passcodes = {}
+    keypad_wrapper.device.delete_passcode = AsyncMock()
+    keypad_wrapper._sync_and_apply_schedules = AsyncMock()
+
+    # Lock wrapper
+    lock_wrapper = MagicMock()
+    lock_wrapper.hass = hass
+    # Mock adv_data device UUID
+    mock_uuid = UUID("11200509-0108-0802-b700-6500ffffffff")
+    lock_wrapper.adv_data.device_uuid = mock_uuid
+    lock_wrapper.device.fetch_and_flush_history = AsyncMock(return_value=[
+        {
+            "record_id": 10,
+            "type": 11, # Keypad unlock
+            "timestamp": int(time.time()),
+            "tag": 2, # Passcode
+            "raw_parameter": "otp_uid"
+        }
+    ])
+    lock_wrapper.history_records = []
+    lock_wrapper.resolve_history_record = sesame_ble.SesameDeviceWrapper.resolve_history_record.__get__(
+        lock_wrapper, sesame_ble.SesameDeviceWrapper
+    )
+
+    # Register them in hass.data
+    hass.data = {
+        DOMAIN: {
+            "keypad_entry": keypad_wrapper,
+            "lock_entry": lock_wrapper,
+        }
+    }
+    
+    # Configure keypad paired lock mapping
+    keypad_wrapper.device.paired_locks = [{"uuid": str(mock_uuid), "status": 4}]
+    keypad_wrapper.model_name = "SESAME_TOUCH"
+
+    # Bind and run fetch_and_flush_history
+    lock_wrapper.fetch_and_flush_history = sesame_ble.SesameDeviceWrapper.fetch_and_flush_history.__get__(
+        lock_wrapper, sesame_ble.SesameDeviceWrapper
+    )
+    
+    await lock_wrapper.fetch_and_flush_history()
+
+    # Verify that the OTP was deleted logically and physically
+    assert "otp_uid" not in keypad_wrapper.logical_passcodes
+    assert "otp_uid" in keypad_wrapper.recently_deleted_passcodes
+    keypad_wrapper.device.delete_passcode.assert_awaited_once_with("otp_uid")
+
+
+@pytest.mark.asyncio
+async def test_person_name_resolution():
+    """Test person entity resolution in SesameDeviceWrapper.resolve_history_record."""
+    import sesame_ble
+
+    hass = MagicMock()
+    # Mock a Person state
+    mock_person_state = MagicMock()
+    mock_person_state.name = "Alice Smith"
+    hass.states.get.return_value = mock_person_state
+
+    # Keypad wrapper with credentials
+    keypad_wrapper = MagicMock()
+    keypad_wrapper.model_name = "SESAME_TOUCH"
+    keypad_wrapper.logical_passcodes = {
+        "pass_uid": {
+            "name": "Private Passcode",
+            "person_id": "person.alice",
+        }
+    }
+    keypad_wrapper.device.paired_locks = [{"uuid": "11200509-0108-0802-b700-6500ffffffff", "status": 4}]
+
+    lock_wrapper = MagicMock()
+    lock_wrapper.hass = hass
+    lock_wrapper.adv_data.device_uuid = UUID("11200509-0108-0802-b700-6500ffffffff")
+    
+    hass.data = {
+        DOMAIN: {
+            "keypad_entry": keypad_wrapper,
+            "lock_entry": lock_wrapper,
+        }
+    }
+
+    # Bind resolve_history_record
+    lock_wrapper.resolve_history_record = sesame_ble.SesameDeviceWrapper.resolve_history_record.__get__(
+        lock_wrapper, sesame_ble.SesameDeviceWrapper
+    )
+
+    resolved = lock_wrapper.resolve_history_record(
+        record_id=12,
+        history_type=12, # Unlock/Lock type
+        timestamp=1625097600,
+        tag=2, # Passcode
+        raw_param="pass_uid"
+    )
+
+    assert resolved["person_id"] == "person.alice"
+    assert resolved["caller"] == "Alice Smith"
+    hass.states.get.assert_called_once_with("person.alice")
+
+
+@pytest.mark.asyncio
+async def test_rssi_and_connection_sensors():
+    """Test SesameRSSISensor and SesameConnectionSensor states."""
+    from sesame_ble.sensor import SesameRSSISensor, SesameConnectionSensor
+    from homeassistant.components import bluetooth
+
+    hass = MagicMock()
+    wrapper = MagicMock()
+    wrapper.hass = hass
+    wrapper.ble_device.address = "AA:BB:CC:DD:EE:FF"
+    wrapper.entry.unique_id = "test_unique_id"
+    wrapper.device.is_connected = True
+    wrapper.device.is_logged_in = True
+
+    # 1. RSSI sensor
+    rssi_sensor = SesameRSSISensor(wrapper)
+    assert rssi_sensor.unique_id == "test_unique_id_rssi"
+    assert rssi_sensor.available is True
+
+    # Mock bluetooth service info
+    mock_service_info = MagicMock()
+    mock_service_info.rssi = -75
+    
+    with patch("homeassistant.components.bluetooth.async_last_service_info", return_value=mock_service_info) as mock_last_info:
+        assert rssi_sensor.native_value == -75
+        mock_last_info.assert_called_once_with(hass, "AA:BB:CC:DD:EE:FF")
+
+    # 2. Connection sensor
+    conn_sensor = SesameConnectionSensor(wrapper)
+    assert conn_sensor.unique_id == "test_unique_id_connection_state"
+    assert conn_sensor.available is True
+    assert conn_sensor.native_value == "connected"
+    assert conn_sensor.extra_state_attributes["is_connected"] is True
+    assert conn_sensor.extra_state_attributes["is_logged_in"] is True
+
+    # Test disconnected state
+    wrapper.device.is_connected = False
+    assert conn_sensor.native_value == "disconnected"

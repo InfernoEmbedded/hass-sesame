@@ -205,6 +205,102 @@ class SesameDeviceWrapper:
                     logger.exception("Error in scheduler loop for %s", self.device.mac_address)
             await asyncio.sleep(60)
 
+    def resolve_history_record(self, record_id: int, history_type: int, timestamp: int, tag: int, raw_param: str) -> dict[str, Any]:
+        """Resolves a raw history record into human-readable details, including person linkage."""
+        is_unlock = (history_type % 2 == 0) and (history_type != 0)
+        event_type = "Unlock" if is_unlock else "Lock"
+
+        method = "Manual"
+        caller = "Manual"
+        person_id = None
+
+        # Resolve keypad wrapper that is paired to this lock
+        keypad_wrapper = None
+        for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
+            if other_entry_id == "views_registered":
+                continue
+            if hasattr(other_wrapper, "model_name") and "TOUCH" in other_wrapper.model_name:
+                for lock_info in getattr(other_wrapper.device, "paired_locks", []):
+                    if lock_info["uuid"].lower() == str(self.adv_data.device_uuid).lower():
+                        keypad_wrapper = other_wrapper
+                        break
+                if keypad_wrapper:
+                    break
+
+        if history_type in (1, 2):
+            method = "Manual"
+            caller = "Manual"
+        elif history_type in (3, 4):
+            method = "BLE"
+            caller = "Home Assistant"
+        elif history_type in (5, 6):
+            method = "Auto-Lock"
+            caller = "Auto"
+        elif history_type in (7, 8):
+            method = "Web API"
+            caller = "Cloud API"
+        elif history_type in (11, 12):
+            method = "Keypad"
+            caller = "Keypad"
+
+        if keypad_wrapper:
+            if tag == 0:  # NFC Card
+                method = "NFC Card"
+                card_info = keypad_wrapper.logical_cards.get(raw_param, {})
+                caller = card_info.get("name", f"NFC Card ({raw_param[:8]})")
+                person_id = card_info.get("person_id")
+            elif tag == 1:  # Fingerprint
+                method = "Fingerprint"
+                finger_info = keypad_wrapper.logical_fingerprints.get(raw_param, {})
+                caller = finger_info.get("name", f"Fingerprint ({raw_param[:8]})")
+                person_id = finger_info.get("person_id")
+            elif tag == 2:  # Passcode
+                method = "Passcode"
+                pass_info = keypad_wrapper.logical_passcodes.get(raw_param, {})
+                caller = pass_info.get("name", f"Passcode ({raw_param[:8]})")
+                person_id = pass_info.get("person_id")
+            elif tag in (5, 6):  # TouchPro UUID, Touch UUID
+                method = "Keypad"
+                caller = keypad_wrapper.entry.title
+        else:
+            # Fallback when no keypad is paired or found
+            name_str = None
+            try:
+                raw_bytes = bytes.fromhex(raw_param)
+                if len(raw_bytes) >= 16:
+                    try:
+                        if len(raw_bytes) > 16:
+                            name_str = raw_bytes[16:].decode("utf-8", errors="ignore").strip().rstrip("\x00")
+                    except Exception:
+                        pass
+                if not name_str:
+                    try:
+                        name_str = raw_bytes.decode("utf-8", errors="replace").strip().rstrip("\x00")
+                    except Exception:
+                        name_str = raw_param
+            except ValueError:
+                name_str = raw_param
+
+            if name_str and name_str != raw_param:
+                caller = name_str
+                if name_str == "Home Assistant":
+                    method = "BLE"
+
+        # Resolve person name if person_id is set
+        if person_id:
+            person_state = self.hass.states.get(person_id)
+            if person_state:
+                caller = person_state.name
+
+        return {
+            "record_id": record_id,
+            "timestamp": timestamp,
+            "event_type": event_type,
+            "method": method,
+            "caller": caller,
+            "person_id": person_id,
+        }
+
     async def fetch_and_flush_history(self) -> None:
         """Fetch history records from the lock, update the local database, and save to store."""
         if not hasattr(self.device, "fetch_and_flush_history"):
@@ -224,6 +320,59 @@ class SesameDeviceWrapper:
                         self.history_records.append(r)
                         existing_ids.add(r["record_id"])
                         added_any = True
+
+                        # Fire Home Assistant event for the new history record
+                        try:
+                            resolved = self.resolve_history_record(
+                                r["record_id"],
+                                r["type"],
+                                r["timestamp"],
+                                r["tag"],
+                                r["raw_parameter"],
+                            )
+                            event_data = {
+                                "device_id": self.entry.entry_id,
+                                "device_name": self.entry.title,
+                                "record_id": r["record_id"],
+                                "event_type": resolved["event_type"],
+                                "method": resolved["method"],
+                                "caller": resolved["caller"],
+                            }
+                            if resolved["person_id"]:
+                                event_data["person_id"] = resolved["person_id"]
+                            self.hass.bus.async_fire("sesame_ble_event", event_data)
+                        except Exception as ev_err:
+                            logger.exception("Failed to fire history event: %s", ev_err)
+
+                        # Delete OTP passcode if this is the matching use event
+                        if r["tag"] == 2:  # Passcode
+                            used_uid = r["raw_parameter"]
+                            # Find keypad wrapper paired to this lock
+                            keypad_wrapper = None
+                            for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
+                                if other_entry_id == "views_registered":
+                                    continue
+                                if hasattr(other_wrapper, "model_name") and "TOUCH" in other_wrapper.model_name:
+                                    for lock_info in getattr(other_wrapper.device, "paired_locks", []):
+                                        if lock_info["uuid"].lower() == str(self.adv_data.device_uuid).lower():
+                                            keypad_wrapper = other_wrapper
+                                            break
+                                    if keypad_wrapper:
+                                        break
+
+                            if keypad_wrapper and used_uid in keypad_wrapper.logical_passcodes:
+                                passcode_info = keypad_wrapper.logical_passcodes[used_uid]
+                                if passcode_info.get("one_time"):
+                                    logger.info("OTP Passcode '%s' (uid: %s) used. Deleting immediately.", passcode_info["name"], used_uid)
+                                    del keypad_wrapper.logical_passcodes[used_uid]
+                                    import time
+                                    keypad_wrapper.recently_deleted_passcodes[used_uid] = time.time()
+                                    try:
+                                        await keypad_wrapper.device.delete_passcode(used_uid)
+                                    except Exception as e:
+                                        logger.error("Failed to delete used OTP passcode %s: %s", used_uid, e)
+                                    # Trigger keypad sync to write state
+                                    asyncio.create_task(keypad_wrapper._sync_and_apply_schedules())
 
                 if added_any:
                     # Sort by timestamp descending (newest first)
@@ -276,6 +425,36 @@ class SesameDeviceWrapper:
 
             now = datetime.datetime.now()
             changed = False
+
+            # Check for OTP (One-Time Passcode) usage in the paired lock's history
+            paired_lock_wrapper = None
+            for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
+                if other_entry_id == "views_registered":
+                    continue
+                if not hasattr(other_wrapper, "model_name") or "TOUCH" not in other_wrapper.model_name:
+                    lock_uuid_str = str(other_wrapper.adv_data.device_uuid).lower()
+                    for lock_info in getattr(self.device, "paired_locks", []):
+                        if lock_info["uuid"].lower() == lock_uuid_str:
+                            paired_lock_wrapper = other_wrapper
+                            break
+                    if paired_lock_wrapper:
+                        break
+
+            if paired_lock_wrapper:
+                for record in paired_lock_wrapper.history_records:
+                    if record.get("tag") == 2:  # Passcode tag
+                        used_uid = record.get("raw_parameter")
+                        if used_uid in self.logical_passcodes:
+                            passcode_info = self.logical_passcodes[used_uid]
+                            if passcode_info.get("one_time"):
+                                logger.info("OTP Passcode '%s' (uid: %s) has been used. Deleting...", passcode_info["name"], used_uid)
+                                del self.logical_passcodes[used_uid]
+                                self.recently_deleted_passcodes[used_uid] = now_ts
+                                try:
+                                    await self.device.delete_passcode(used_uid)
+                                except Exception as e:
+                                    logger.error("Failed to delete used OTP passcode %s from physical device: %s", used_uid, e)
+                                changed = True
 
             # 1. Sync physical passcodes to logical (added via app)
             for uid, phys_info in physical_passcodes.items():

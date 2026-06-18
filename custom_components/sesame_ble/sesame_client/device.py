@@ -763,7 +763,8 @@ class BaseKeypad:
         """Evaluates schedules and synchronizes passcodes.
 
         This implements the virtualization of time-windowed passcodes by checking
-        start/end times and adding/deleting passcodes accordingly.
+        start/end times, weekly day lists, and daily time ranges, adding or
+        deleting passcodes accordingly.
 
         Drivers can override this method if the hardware has native support for
         scheduled or time-windowed passcodes.
@@ -795,6 +796,7 @@ class BaseKeypad:
         changed = False
 
         for uid, logical_info in list(logical_passcodes.items()):
+            # 1. Absolute date/time range check
             start_dt = parse_dt(logical_info.get("start", ""))
             end_dt = parse_dt(logical_info.get("end", ""))
 
@@ -803,6 +805,39 @@ class BaseKeypad:
                 should_be_active = False
             if end_dt and now >= end_dt:
                 should_be_active = False
+
+            # 2. Weekly days check
+            days_list = logical_info.get("days")
+            if should_be_active and days_list:
+                try:
+                    # Convert elements to integers in case they are stringified
+                    int_days = [int(d) for d in days_list]
+                    if now.weekday() not in int_days:
+                        should_be_active = False
+                except (ValueError, TypeError) as e:
+                    _logger.warning("Invalid days list for passcode '%s': %s", logical_info.get("name"), e)
+
+            # 3. Daily time range check
+            time_start_str = logical_info.get("time_start", "").strip()
+            time_end_str = logical_info.get("time_end", "").strip()
+            if should_be_active and (time_start_str or time_end_str):
+                current_time = now.time()
+                if time_start_str:
+                    try:
+                        h, m = map(int, time_start_str.split(":"))
+                        t_start = datetime.time(h, m)
+                        if current_time < t_start:
+                            should_be_active = False
+                    except (ValueError, TypeError) as e:
+                        _logger.warning("Invalid time_start '%s' for passcode '%s': %s", time_start_str, logical_info.get("name"), e)
+                if time_end_str:
+                    try:
+                        h, m = map(int, time_end_str.split(":"))
+                        t_end = datetime.time(h, m)
+                        if current_time >= t_end:
+                            should_be_active = False
+                    except (ValueError, TypeError) as e:
+                        _logger.warning("Invalid time_end '%s' for passcode '%s': %s", time_end_str, logical_info.get("name"), e)
 
             is_physically_active = uid in self.passcodes
 

@@ -64,6 +64,11 @@ class SesamePasscodesView(HomeAssistantView):
                     "code": info["code"],
                     "start": info.get("start", ""),
                     "end": info.get("end", ""),
+                    "days": info.get("days", []),
+                    "time_start": info.get("time_start", ""),
+                    "time_end": info.get("time_end", ""),
+                    "one_time": info.get("one_time", False),
+                    "person_id": info.get("person_id", None),
                     "is_physical": uid in wrapper.device.passcodes,
                 })
 
@@ -73,6 +78,7 @@ class SesamePasscodesView(HomeAssistantView):
                     "uid": uid,
                     "name": info["name"],
                     "type": info["type"],
+                    "person_id": info.get("person_id", None),
                 })
 
             fingerprints_data = []
@@ -81,6 +87,7 @@ class SesamePasscodesView(HomeAssistantView):
                     "uid": uid,
                     "name": info["name"],
                     "type": info["type"],
+                    "person_id": info.get("person_id", None),
                 })
 
             paired_locks_data = []
@@ -139,6 +146,13 @@ class SesamePasscodesView(HomeAssistantView):
         code = data.get("code", "").strip()
         start = data.get("start", "").strip()
         end = data.get("end", "").strip()
+        days = data.get("days", [])
+        time_start = data.get("time_start", "").strip()
+        time_end = data.get("time_end", "").strip()
+        one_time = bool(data.get("one_time", False))
+        person_id = data.get("person_id")
+        if person_id == "":
+            person_id = None
 
         if not name:
             return self.json({"error": "Name is required"}, status_code=400)
@@ -154,6 +168,22 @@ class SesamePasscodesView(HomeAssistantView):
             end_dt = parse_datetime(end)
             if not end_dt:
                 return self.json({"error": f"Invalid end datetime format: '{end}'. Use YYYY-MM-DD HH:MM"}, status_code=400)
+
+        # Validate time_start and time_end
+        if time_start:
+            try:
+                h, m = map(int, time_start.split(":"))
+                if not (0 <= h <= 23 and 0 <= m <= 59):
+                    raise ValueError()
+            except ValueError:
+                return self.json({"error": f"Invalid daily start time format: '{time_start}'. Use HH:MM"}, status_code=400)
+        if time_end:
+            try:
+                h, m = map(int, time_end.split(":"))
+                if not (0 <= h <= 23 and 0 <= m <= 59):
+                    raise ValueError()
+            except ValueError:
+                return self.json({"error": f"Invalid daily end time format: '{time_end}'. Use HH:MM"}, status_code=400)
 
         # Resolve unique hex ID from PIN
         uid = bytes(int(c) for c in code).hex()
@@ -181,6 +211,11 @@ class SesamePasscodesView(HomeAssistantView):
                 "code": code,
                 "start": start,
                 "end": end,
+                "days": days,
+                "time_start": time_start,
+                "time_end": time_end,
+                "one_time": one_time,
+                "person_id": person_id,
             }
 
             # If the passcode is already active physically (e.g. scanned), update its name on the device
@@ -267,7 +302,7 @@ class SesameCardsView(HomeAssistantView):
         self.hass = hass
 
     async def post(self, request: web.Request) -> web.Response:
-        """Update a card name."""
+        """Update a card name and person linkage."""
         try:
             data = await request.json()
         except ValueError:
@@ -276,6 +311,9 @@ class SesameCardsView(HomeAssistantView):
         entry_id = data.get("entry_id")
         uid = data.get("uid")
         name = data.get("name", "").strip()
+        person_id = data.get("person_id")
+        if person_id == "":
+            person_id = None
 
         if not entry_id or entry_id not in self.hass.data[DOMAIN]:
             return self.json({"error": "Invalid entry_id"}, status_code=400)
@@ -294,6 +332,7 @@ class SesameCardsView(HomeAssistantView):
         try:
             if uid in wrapper.logical_cards:
                 wrapper.logical_cards[uid]["name"] = name
+                wrapper.logical_cards[uid]["person_id"] = person_id
                 await wrapper.store.async_save({
                     "passcodes": wrapper.logical_passcodes,
                     "cards": wrapper.logical_cards,
@@ -365,7 +404,7 @@ class SesameFingerprintsView(HomeAssistantView):
         self.hass = hass
 
     async def post(self, request: web.Request) -> web.Response:
-        """Update a fingerprint name."""
+        """Update a fingerprint name and person linkage."""
         try:
             data = await request.json()
         except ValueError:
@@ -374,6 +413,9 @@ class SesameFingerprintsView(HomeAssistantView):
         entry_id = data.get("entry_id")
         uid = data.get("uid")
         name = data.get("name", "").strip()
+        person_id = data.get("person_id")
+        if person_id == "":
+            person_id = None
 
         if not entry_id or entry_id not in self.hass.data[DOMAIN]:
             return self.json({"error": "Invalid entry_id"}, status_code=400)
@@ -392,6 +434,7 @@ class SesameFingerprintsView(HomeAssistantView):
         try:
             if uid in wrapper.logical_fingerprints:
                 wrapper.logical_fingerprints[uid]["name"] = name
+                wrapper.logical_fingerprints[uid]["person_id"] = person_id
                 await wrapper.store.async_save({
                     "passcodes": wrapper.logical_passcodes,
                     "cards": wrapper.logical_cards,
@@ -409,7 +452,8 @@ class SesameFingerprintsView(HomeAssistantView):
                 # Add to logical fingerprints
                 wrapper.logical_fingerprints[uid] = {
                     "name": name,
-                    "type": wrapper.device.scanned_fingerprint.get("type", 0)
+                    "type": wrapper.device.scanned_fingerprint.get("type", 0),
+                    "person_id": person_id,
                 }
                 await wrapper.store.async_save({
                     "passcodes": wrapper.logical_passcodes,
@@ -655,6 +699,9 @@ class SesameCardsAddView(HomeAssistantView):
         uid = data.get("uid")
         name = data.get("name", "").strip()
         card_type = data.get("type", 0x80)
+        person_id = data.get("person_id")
+        if person_id == "":
+            person_id = None
 
         if not entry_id or entry_id not in self.hass.data[DOMAIN]:
             return self.json({"error": "Invalid entry_id"}, status_code=400)
@@ -680,6 +727,7 @@ class SesameCardsAddView(HomeAssistantView):
             wrapper.logical_cards[uid] = {
                 "name": name,
                 "type": card_type,
+                "person_id": person_id,
             }
             await wrapper.store.async_save({
                 "passcodes": wrapper.logical_passcodes,
@@ -730,74 +778,20 @@ class SesameLockHistoryView(HomeAssistantView):
         if lock_wrapper.device and lock_wrapper.device.is_logged_in:
             asyncio.create_task(lock_wrapper.fetch_and_flush_history())
 
-        # Map raw history records to human-readable format
+        # Map raw history records to human-readable format via the wrapper's resolver
         formatted_history = []
         for record in lock_wrapper.history_records:
-            h_type = record.get("type", 0)
-            is_unlock = (h_type % 2 == 0) and (h_type != 0)
-            event_type = "Unlock" if is_unlock else "Lock"
-
-            tag = record.get("tag", 0)
-            raw_param = record.get("raw_parameter", "")
-            
-            method = "Manual"
-            caller = "Manual"
-
-            if h_type in (1, 2):
-                method = "Manual"
-                caller = "Manual"
-            elif h_type in (3, 4):
-                method = "BLE"
-                caller = "Home Assistant"
-            elif h_type in (5, 6):
-                method = "Auto-Lock"
-                caller = "Auto"
-            elif h_type in (7, 8):
-                method = "Web API"
-                caller = "Cloud API"
-            elif h_type in (11, 12):
-                method = "Keypad"
-                caller = "Keypad"
-
-            if tag == 0:  # NFC Card
-                method = "NFC Card"
-                caller = keypad_wrapper.logical_cards.get(raw_param, {}).get("name", f"NFC Card ({raw_param[:8]})")
-            elif tag == 1:  # Fingerprint
-                method = "Fingerprint"
-                caller = keypad_wrapper.logical_fingerprints.get(raw_param, {}).get("name", f"Fingerprint ({raw_param[:8]})")
-            elif tag == 2:  # Passcode
-                method = "Passcode"
-                caller = keypad_wrapper.logical_passcodes.get(raw_param, {}).get("name", f"Passcode ({raw_param[:8]})")
-            elif tag in (5, 6):  # TouchPro UUID, Touch UUID
-                method = "Keypad"
-                caller = keypad_wrapper.entry.title
-            else:
-                name_str = None
-                raw_bytes = bytes.fromhex(raw_param)
-                if len(raw_bytes) >= 16:
-                    try:
-                        if len(raw_bytes) > 16:
-                            name_str = raw_bytes[16:].decode("utf-8", errors="ignore").strip().rstrip("\x00")
-                    except Exception:
-                        pass
-                if not name_str:
-                    try:
-                        name_str = raw_bytes.decode("utf-8", errors="replace").strip().rstrip("\x00")
-                    except Exception:
-                        name_str = raw_param
-
-                if name_str and name_str != raw_param:
-                    caller = name_str
-                    if name_str == "Home Assistant":
-                        method = "BLE"
-
-            formatted_history.append({
-                "record_id": record.get("record_id"),
-                "timestamp": record.get("timestamp"),
-                "event_type": event_type,
-                "method": method,
-                "caller": caller,
-            })
+            try:
+                resolved = lock_wrapper.resolve_history_record(
+                    record.get("record_id"),
+                    record.get("type", 0),
+                    record.get("timestamp", 0),
+                    record.get("tag", 0),
+                    record.get("raw_parameter", ""),
+                )
+                formatted_history.append(resolved)
+            except Exception as e:
+                logger.warning("Failed to resolve history record %s: %s", record, e)
 
         return self.json({
             "lock_name": lock_wrapper.entry.title,

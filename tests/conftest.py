@@ -162,6 +162,7 @@ bluetooth_mock = mock_module("homeassistant.components.bluetooth", {
     "async_ble_device_from_address": MagicMock(),
     "async_get_advertisement_data": MagicMock(),
     "BluetoothServiceInfoBleak": MagicMock,
+    "async_last_service_info": MagicMock(),
 })
 class MockHomeAssistantView:
     def __init__(self, *args, **kwargs):
