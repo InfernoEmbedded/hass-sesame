@@ -66,6 +66,7 @@ Installing the integration installs both components: the **Sesame BLE Lock Drive
 3. Search for **Candy House Sesame BLE**.
 4. Choose your configuration method:
    - **QR Code (Recommended)**: Scan or copy the QR code URL from your Sesame app (format: `ssm://UI?uuid=...&key=...&m=...`). The integration will parse the MAC address, UUID, and Encryption Secret Key automatically.
+   - **Direct BLE Enrollment via Reset Button (100% App-Free)**: Put your Sesame lock or keypad into its unregistered pairing state by holding down its physical reset button (located under the battery cover or back plate) until it flashes/beeps. Select **Discover Unregistered Devices** in Home Assistant; the integration will automatically detect the reset device, perform the secure BLE registration handshake, retrieve its secret key, and add it directly.
    - **Manual Configuration**: Manually enter the Bluetooth MAC Address, Device UUID, and Secret Key.
 
 ---
