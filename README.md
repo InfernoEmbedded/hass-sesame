@@ -8,6 +8,8 @@ A high-performance, fully local Home Assistant custom integration for controllin
 
 > [!NOTE]
 > This integration operates **100% locally** over Bluetooth. It does not require a Candy House Wi-Fi Hub, active internet connection, or cloud API credentials.
+>
+> All credential nicknames, configurations, and schedules are stored in a **local Home Assistant database**. To protect your privacy and maintain local offline operations, names and schedules created in Home Assistant **will not sync to or appear in the official Candy House mobile app or cloud account**.
 
 ---
 
