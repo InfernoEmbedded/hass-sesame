@@ -60,13 +60,21 @@ async def test_calibration_buttons_setup_and_press(mock_bluetooth) -> None:
 
     async_add_entities.assert_called_once()
     buttons = async_add_entities.call_args[0][0]
-    assert len(buttons) == 2
+    assert len(buttons) == 3
 
     locked_btn = next(b for b in buttons if b.unique_id == "test_mac_calibration_set_locked_position")
     unlocked_btn = next(b for b in buttons if b.unique_id == "test_mac_calibration_set_unlocked_position")
+    calibrate_btn = next(b for b in buttons if b.unique_id == "test_mac_calibration_calibrate_magnet")
 
     assert locked_btn.name == "Set Locked Position"
     assert unlocked_btn.name == "Set Unlocked Position"
+    assert calibrate_btn.name == "Calibrate Magnet"
+
+    # Test Calibrate Magnet Button Press
+    wrapper.device.is_logged_in = True
+    wrapper.device.calibrate_magnet = AsyncMock()
+    await calibrate_btn.async_press()
+    wrapper.device.calibrate_magnet.assert_called_once()
 
     # 3. Test Button Availability
     wrapper.device.is_logged_in = False
@@ -291,12 +299,14 @@ async def test_auto_lock_number_entity(mock_bluetooth) -> None:
 
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
-    assert len(entities) == 1
-    num_entity = entities[0]
+    assert len(entities) == 2
+    num_entity = next(e for e in entities if e.unique_id == "test_mac_number_auto_lock_delay")
+    ops_entity = next(e for e in entities if e.unique_id == "test_mac_number_ops_auto_lock_delay")
 
     assert num_entity.name == "Auto Lock Delay"
-    assert num_entity.unique_id == "test_mac_number_auto_lock_delay"
     assert num_entity._attr_native_unit_of_measurement == "s"
+    assert ops_entity.name == "OpenSensor Auto Lock Delay"
+    assert ops_entity._attr_native_unit_of_measurement == "s"
 
     # Test Value
     wrapper.device.auto_lock_second = 15
@@ -308,6 +318,17 @@ async def test_auto_lock_number_entity(mock_bluetooth) -> None:
 
     await num_entity.async_set_native_value(30.0)
     wrapper.device.set_auto_lock_second.assert_called_once_with(30)
+
+    # Test OpenSensor Value
+    wrapper.device.ops_lock_second = 30
+    assert ops_entity.native_value == 30.0
+
+    # Test Set OpenSensor Value
+    wrapper.device.is_logged_in = True
+    wrapper.device.set_ops_lock_second = AsyncMock()
+
+    await ops_entity.async_set_native_value(60.0)
+    wrapper.device.set_ops_lock_second.assert_called_once_with(60)
 
 
 @pytest.mark.asyncio

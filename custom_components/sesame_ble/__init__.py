@@ -24,7 +24,7 @@ from .sesame_client import (
 
 logger = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.LOCK, Platform.SENSOR, Platform.BUTTON, Platform.NUMBER, Platform.SELECT]
+PLATFORMS = [Platform.LOCK, Platform.SENSOR, Platform.BUTTON, Platform.NUMBER, Platform.SELECT, Platform.BINARY_SENSOR]
 
 
 def parse_datetime(dt_str: str) -> datetime.datetime | None:
@@ -97,12 +97,14 @@ class SesameDeviceWrapper:
     def _handle_status_update(self, device: Any, status: Any) -> None:
         """Callback for device mechanical status updates."""
         logger.info(
-            "[_handle_status_update] Device %s status updated. card_reg_mode=%s, fp_reg_mode=%s, scanned_card=%s, scanned_fp=%s",
+            "[_handle_status_update] Device %s status updated. card_reg_mode=%s, fp_reg_mode=%s, passcode_reg_mode=%s, scanned_card=%s, scanned_fp=%s, scanned_passcode=%s",
             device.mac_address,
             getattr(device, "card_registration_mode", None),
             getattr(device, "fingerprint_registration_mode", None),
+            getattr(device, "passcode_registration_mode", None),
             getattr(device, "scanned_card", None),
-            getattr(device, "scanned_fingerprint", None)
+            getattr(device, "scanned_fingerprint", None),
+            getattr(device, "scanned_passcode", None)
         )
         # Notify Home Assistant entities to write their state
         for listener in self.update_listeners:
@@ -280,7 +282,17 @@ class SesameDeviceWrapper:
                 if uid in self.recently_deleted_passcodes:
                     continue
                 if uid not in self.logical_passcodes:
-                    logger.info("[_sync_and_apply_schedules] Auto-adding new physical passcode %s to logical list", uid)
+                    if getattr(self.device, "passcode_registration_mode", False):
+                        logger.info("[_sync_and_apply_schedules] Skipping auto-adding physical passcode %s to logical list because passcode registration mode is active", uid)
+                        if not getattr(self.device, "scanned_passcode", None) or self.device.scanned_passcode.get("uid") != uid:
+                            self.device.scanned_passcode = {
+                                "uid": uid,
+                                "code": phys_info["code"],
+                                "type": phys_info.get("type", 0),
+                            }
+                            logger.info("[_sync_and_apply_schedules] Set scanned_passcode in wrapper: %s", self.device.scanned_passcode)
+                        continue
+                    logger.info("[_sync_and_apply_schedules] Auto-adding new physical passcode %s (%s) to logical list", uid, phys_info["name"])
                     self.logical_passcodes[uid] = {
                         "name": phys_info["name"],
                         "code": phys_info["code"],
@@ -473,6 +485,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             SesameFingerprintsView,
             SesameCardsRegisterView,
             SesameFingerprintsRegisterView,
+            SesamePasscodesRegisterView,
             SesameCardsAddView,
             SesameLockHistoryView,
             SesameKeypadPairView,
@@ -496,6 +509,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             pass
         try:
             hass.http.register_view(SesameFingerprintsRegisterView(hass))
+        except Exception:
+            pass
+        try:
+            hass.http.register_view(SesamePasscodesRegisterView(hass))
         except Exception:
             pass
         try:

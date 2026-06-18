@@ -621,7 +621,12 @@
 
           <!-- List Section -->
           <div class="list-container">
-            <h3 style="margin-bottom: 20px; font-weight: 600;">Passcode List</h3>
+            <div class="section-header-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+              <h3 style="font-weight: 600; margin: 0;">Passcode List</h3>
+              <button id="add-passcode-btn" class="btn" onclick="startPasscodeRegistration()" style="display: none;">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Add Passcode (Physical Scan)
+              </button>
+            </div>
             <div id="passcodes-list" class="items-list">
               <div class="no-items">Select a keypad to load passcodes.</div>
             </div>
@@ -787,6 +792,39 @@
     </div>
   </div>
 
+  <!-- Passcode Registration Modal -->
+  <div id="passcode-reg-modal" class="edit-modal">
+    <div class="edit-modal-content">
+      <div class="modal-header">
+        <h3>Add Passcode (Physical Scan)</h3>
+        <button class="modal-close" onclick="cancelPasscodeRegistration()">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 20px 0; text-align: center;">
+        <div class="pulse-container" style="margin-bottom: 20px;">
+          <svg class="pulse-icon" viewBox="0 0 24 24" style="width: 80px; height: 80px; fill: var(--primary-color);">
+            <path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM8.9 6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2H8.9V6zM18 20H6V10h12v10z"/>
+          </svg>
+        </div>
+        <p id="passcode-reg-status" style="font-size: 16px; font-weight: 500; color: var(--secondary-text-color);">
+          Waiting for passcode entry on keypad...
+        </p>
+        
+        <form id="passcode-add-form" style="display: none; text-align: left; margin-top: 20px;">
+          <input type="hidden" id="passcode-add-uid">
+          <input type="hidden" id="passcode-add-code">
+          <div class="form-group">
+            <label for="passcode-add-name">Passcode Name / Owner</label>
+            <input type="text" id="passcode-add-name" class="input-style" placeholder="e.g. Guest's Passcode" required>
+          </div>
+          <button type="submit" class="btn" style="width: 100%; margin-top: 15px;">Save Passcode</button>
+        </form>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+        <button id="passcode-reg-cancel-btn" class="btn btn-cancel" onclick="cancelPasscodeRegistration()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let activeKeypads = [];
     let currentKeypadEntryId = "";
@@ -850,6 +888,7 @@
       document.getElementById("rename-form").addEventListener("submit", handleRenameSubmit);
       document.getElementById("card-add-form").addEventListener("submit", handleCardAddSubmit);
       document.getElementById("fingerprint-add-form").addEventListener("submit", handleFingerprintAddSubmit);
+      document.getElementById("passcode-add-form").addEventListener("submit", handlePasscodeAddSubmit);
       document.getElementById("pair-form").addEventListener("submit", handlePairSubmit);
 
       // Device Select change
@@ -1022,12 +1061,15 @@
       // Show/Hide Add Buttons depending on connection/online state
       const addCardBtn = document.getElementById("add-card-btn");
       const addFingerprintBtn = document.getElementById("add-fingerprint-btn");
+      const addPasscodeBtn = document.getElementById("add-passcode-btn");
       if (keypad.is_logged_in) {
         if (addCardBtn) addCardBtn.style.display = "inline-flex";
         if (addFingerprintBtn) addFingerprintBtn.style.display = "inline-flex";
+        if (addPasscodeBtn) addPasscodeBtn.style.display = "inline-flex";
       } else {
         if (addCardBtn) addCardBtn.style.display = "none";
         if (addFingerprintBtn) addFingerprintBtn.style.display = "none";
+        if (addPasscodeBtn) addPasscodeBtn.style.display = "none";
       }
 
       // Render Fingerprints
@@ -1637,6 +1679,119 @@
         }
       } catch (err) {
         console.error("Error saving fingerprint:", err);
+      }
+    }
+
+    // --- Passcode Registration JS ---
+    let passcodeRegModalOpen = false;
+    let passcodeRegPollInterval = null;
+
+    async function startPasscodeRegistration() {
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/passcodes/register", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            action: "start"
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+          return;
+        }
+
+        // Open Modal
+        document.getElementById("passcode-reg-status").innerText = "Waiting for passcode entry on keypad...";
+        document.getElementById("passcode-add-uid").value = "";
+        document.getElementById("passcode-add-code").value = "";
+        document.getElementById("passcode-add-name").value = "";
+        document.getElementById("passcode-add-form").style.display = "none";
+        document.getElementById("passcode-reg-modal").style.display = "flex";
+        
+        passcodeRegModalOpen = true;
+        startPasscodeRegPoll();
+      } catch (err) {
+        console.error("Error starting passcode registration:", err);
+      }
+    }
+
+    function startPasscodeRegPoll() {
+      if (passcodeRegPollInterval) clearInterval(passcodeRegPollInterval);
+      passcodeRegPollInterval = setInterval(async () => {
+        await loadKeypads();
+        const keypad = activeKeypads.find(k => k.entry_id === currentKeypadEntryId);
+        if (keypad && keypad.scanned_passcode) {
+          const passcode = keypad.scanned_passcode;
+          document.getElementById("passcode-reg-status").innerText = `Passcode Entered! (PIN: ${passcode.code})`;
+          document.getElementById("passcode-add-uid").value = passcode.uid;
+          document.getElementById("passcode-add-code").value = passcode.code;
+          document.getElementById("passcode-add-form").style.display = "block";
+          clearInterval(passcodeRegPollInterval);
+          passcodeRegPollInterval = null;
+        }
+      }, 500);
+    }
+
+    function stopPasscodeRegPoll() {
+      if (passcodeRegPollInterval) {
+        clearInterval(passcodeRegPollInterval);
+        passcodeRegPollInterval = null;
+      }
+    }
+
+    async function cancelPasscodeRegistration() {
+      stopPasscodeRegPoll();
+      passcodeRegModalOpen = false;
+      document.getElementById("passcode-reg-modal").style.display = "none";
+
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      try {
+        await hass.fetchWithAuth("/api/sesame_ble/passcodes/register", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            action: "stop"
+          })
+        });
+      } catch (err) {
+        console.error("Error stopping passcode registration:", err);
+      }
+    }
+
+    async function handlePasscodeAddSubmit(e) {
+      e.preventDefault();
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      const uid = document.getElementById("passcode-add-uid").value;
+      const code = document.getElementById("passcode-add-code").value;
+      const name = document.getElementById("passcode-add-name").value;
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/passcodes", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId,
+            uid,
+            code,
+            name
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert(res.error);
+        } else {
+          await cancelPasscodeRegistration();
+          loadKeypads();
+        }
+      } catch (err) {
+        console.error("Error saving passcode:", err);
       }
     }
 

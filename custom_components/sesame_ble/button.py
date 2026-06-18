@@ -33,6 +33,7 @@ async def async_setup_entry(
     async_add_entities([
         SesameSetLockedPositionButton(wrapper),
         SesameSetUnlockedPositionButton(wrapper),
+        SesameCalibrateMagnetButton(wrapper),
     ])
 
 
@@ -129,3 +130,23 @@ class SesameSetUnlockedPositionButton(SesameBaseButton):
             await self.device.configure_lock_position(lock_position, current_angle)
         except Exception as err:
             raise HomeAssistantError(f"Failed to configure unlocked position: {err}") from err
+
+
+class SesameCalibrateMagnetButton(SesameBaseButton):
+    """Button to trigger magnet calibration/angle correction."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the button."""
+        super().__init__(wrapper, "Calibrate Magnet", "calibrate_magnet")
+        self._attr_icon = "mdi:compass"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    async def async_press(self) -> None:
+        """Press the button."""
+        if not self.device.is_logged_in:
+            raise HomeAssistantError("Device is not connected/logged in")
+
+        try:
+            await self.device.calibrate_magnet()
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to calibrate magnet: {err}") from err

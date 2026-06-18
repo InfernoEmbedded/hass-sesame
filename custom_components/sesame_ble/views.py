@@ -116,8 +116,9 @@ class SesamePasscodesView(HomeAssistantView):
                 "cards": cards_data,
                 "fingerprints": fingerprints_data,
                 "paired_locks": paired_locks_data,
-                "scanned_card": wrapper.device.scanned_card if getattr(wrapper.device, "scanned_card", None) else None,
-                "scanned_fingerprint": wrapper.device.scanned_fingerprint if getattr(wrapper.device, "scanned_fingerprint", None) else None,
+                "scanned_card": wrapper.device.scanned_card if isinstance(getattr(wrapper.device, "scanned_card", None), dict) else None,
+                "scanned_fingerprint": wrapper.device.scanned_fingerprint if isinstance(getattr(wrapper.device, "scanned_fingerprint", None), dict) else None,
+                "scanned_passcode": wrapper.device.scanned_passcode if isinstance(getattr(wrapper.device, "scanned_passcode", None), dict) else None,
             })
 
         return self.json({"keypads": keypads_list, "all_locks": all_locks})
@@ -181,6 +182,21 @@ class SesamePasscodesView(HomeAssistantView):
                 "start": start,
                 "end": end,
             }
+
+            # If the passcode is already active physically (e.g. scanned), update its name on the device
+            if wrapper.device and wrapper.device.is_logged_in and uid in wrapper.device.passcodes:
+                try:
+                    await wrapper.device.update_passcode_name(uid, name)
+                except Exception as e:
+                    logger.warning("Failed to rename passcode on physical device: %s", e)
+
+            # If it matches a scanned passcode, clear the scanned_passcode and stop registration mode
+            if getattr(wrapper.device, "scanned_passcode", None) and wrapper.device.scanned_passcode.get("uid") == uid:
+                try:
+                    await wrapper.device.set_passcode_registration_mode(False)
+                except Exception:
+                    pass
+                wrapper.device.scanned_passcode = None
 
             # Save to store
             await wrapper.store.async_save({
@@ -389,6 +405,32 @@ class SesameFingerprintsView(HomeAssistantView):
                         logger.warning("Failed to rename fingerprint on physical device: %s", e)
                 wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
                 return self.json({"success": True})
+            elif getattr(wrapper.device, "scanned_fingerprint", None) and wrapper.device.scanned_fingerprint.get("uid") == uid:
+                # Add to logical fingerprints
+                wrapper.logical_fingerprints[uid] = {
+                    "name": name,
+                    "type": wrapper.device.scanned_fingerprint.get("type", 0)
+                }
+                await wrapper.store.async_save({
+                    "passcodes": wrapper.logical_passcodes,
+                    "cards": wrapper.logical_cards,
+                    "fingerprints": wrapper.logical_fingerprints
+                })
+                if wrapper.device and wrapper.device.is_logged_in:
+                    try:
+                        await wrapper.device.update_fingerprint_name(uid, name)
+                        await wrapper.device.get_fingerprints()
+                    except Exception as e:
+                        logger.warning("Failed to rename fingerprint on physical device: %s", e)
+                
+                # Stop registration mode and clear scanned_fingerprint
+                try:
+                    await wrapper.device.set_fingerprint_registration_mode(False)
+                except Exception:
+                    pass
+                wrapper.device.scanned_fingerprint = None
+                wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
+                return self.json({"success": True})
             else:
                 return self.json({"error": "Fingerprint not found"}, status_code=404)
         except Exception as e:
@@ -536,6 +578,58 @@ class SesameFingerprintsRegisterView(HomeAssistantView):
             return self.json({"success": True})
         except Exception as e:
             logger.exception("SesameFingerprintsRegisterView: Failed to modify registration mode for device %s", wrapper.device.mac_address)
+            return self.json({"error": f"Failed to modify registration mode: {e}"}, status_code=500)
+
+
+class SesamePasscodesRegisterView(HomeAssistantView):
+    """View to handle passcode registration mode (start/stop/status)."""
+
+    url = "/api/sesame_ble/passcodes/register"
+    name = "api:sesame_ble:passcodes:register"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the view."""
+        self.hass = hass
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Start or stop passcode registration mode, or clear scanned passcode."""
+        try:
+            data = await request.json()
+        except ValueError:
+            logger.warning("SesamePasscodesRegisterView: Invalid JSON payload received")
+            return self.json({"error": "Invalid JSON payload"}, status_code=400)
+
+        entry_id = data.get("entry_id")
+        action = data.get("action")  # "start", "stop"
+        logger.info("SesamePasscodesRegisterView: received POST request: entry_id=%s, action=%s", entry_id, action)
+
+        if not entry_id or entry_id not in self.hass.data[DOMAIN]:
+            logger.warning("SesamePasscodesRegisterView: Invalid or missing entry_id: %s", entry_id)
+            return self.json({"error": "Invalid entry_id"}, status_code=400)
+        if action not in ("start", "stop"):
+            logger.warning("SesamePasscodesRegisterView: Invalid action: %s", action)
+            return self.json({"error": "Invalid action (must be 'start' or 'stop')"}, status_code=400)
+
+        wrapper = self.hass.data[DOMAIN][entry_id]
+        if not wrapper.device or not wrapper.device.is_logged_in:
+            logger.warning("SesamePasscodesRegisterView: Device for entry_id %s is not connected or logged in", entry_id)
+            return self.json({"error": "Device is not connected or logged in"}, status_code=503)
+
+        try:
+            if action == "start":
+                wrapper.device.scanned_passcode = None
+                logger.info("SesamePasscodesRegisterView: Starting passcode registration mode for device %s", wrapper.device.mac_address)
+                await wrapper.device.set_passcode_registration_mode(True)
+                logger.info("SesamePasscodesRegisterView: Successfully set passcode registration mode to True on device")
+            else:
+                logger.info("SesamePasscodesRegisterView: Stopping passcode registration mode for device %s", wrapper.device.mac_address)
+                await wrapper.device.set_passcode_registration_mode(False)
+                wrapper.device.scanned_passcode = None
+                logger.info("SesamePasscodesRegisterView: Successfully set passcode registration mode to False on device")
+            return self.json({"success": True})
+        except Exception as e:
+            logger.exception("SesamePasscodesRegisterView: Failed to modify registration mode for device %s", wrapper.device.mac_address)
             return self.json({"error": f"Failed to modify registration mode: {e}"}, status_code=500)
 
 

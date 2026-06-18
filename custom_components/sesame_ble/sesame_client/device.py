@@ -38,7 +38,9 @@ OP_PUBLISH = 0x08
 # Protocol Item Codes
 ITEM_REGISTRATION = 1
 ITEM_LOGIN = 2
+ITEM_TIME = 8
 ITEM_INITIAL = 14
+ITEM_MAGNET = 17
 ITEM_AUTOLOCK = 11
 ITEM_MECH_SETTING = 80
 ITEM_MECH_STATUS = 81
@@ -50,6 +52,11 @@ ITEM_KEYPAD_LOCK_LIST = 102
 ITEM_ADD_SESAME = 101
 ITEM_REMOVE_SESAME = 103
 
+# OpenSensor Item Codes
+ITEM_DOOR_OPEN = 90
+ITEM_DOOR_CLOSED = 91
+ITEM_OPS_TIMER_SETTING = 92
+
 # Touch Keypad Passcode Item Codes
 ITEM_PASSCODE_CHANGE = 123
 ITEM_PASSCODE_DELETE = 124
@@ -57,7 +64,10 @@ ITEM_PASSCODE_GET = 125
 ITEM_PASSCODE_NOTIFY = 126
 ITEM_PASSCODE_LAST = 127
 ITEM_PASSCODE_FIRST = 128
+ITEM_PASSCODE_MODE_GET = 129
+ITEM_PASSCODE_MODE_SET = 130
 ITEM_PASSCODE_ADD = 138
+ITEM_PASSCODE_VERIFY_TO_CLOUD = 151
 
 # Touch Keypad Card Item Codes
 ITEM_CARD_CHANGE = 107
@@ -68,6 +78,7 @@ ITEM_CARD_LAST = 111
 ITEM_CARD_FIRST = 112
 ITEM_CARD_MODE_SET = 114
 ITEM_CARD_ADD = 140
+ITEM_CARD_VERIFY_TO_CLOUD = 203
 
 # Touch Keypad Fingerprint Item Codes
 ITEM_FINGER_CHANGE = 115
@@ -365,6 +376,14 @@ class SesameDevice:
             device_time = int.from_bytes(response, "little")
             self.is_logged_in = True
             logger.info("Logged in successfully. Device time: %d", device_time)
+
+            # Auto-sync time if drift is detected (more than 5 seconds difference)
+            host_time = int(time.time())
+            if abs(device_time - host_time) > 5:
+                try:
+                    await self.sync_time()
+                except Exception as e:
+                    logger.warning("Failed to automatically synchronize clock on login: %s", e)
             
             # Wait for mechanical settings/status to be published to complete login
             try:
@@ -379,6 +398,15 @@ class SesameDevice:
         except Exception:
             await self.disconnect()
             raise
+
+    async def sync_time(self) -> None:
+        """Synchronizes the device's clock with the host time."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        timestamp = int(time.time())
+        logger.info("Synchronizing time on device [address=%s, timestamp=%d]", self.address, timestamp)
+        payload = struct.pack("<I", timestamp)
+        await self.send_command(ITEM_TIME, payload, encrypt=True)
 
     async def disconnect(self) -> None:
         """Gracefully disconnects and resets state."""
@@ -540,7 +568,8 @@ class SesameLock(SesameDevice):
         self.lock_position = None
         self.unlock_position = None
         self.auto_lock_second = None
-
+        self.door_status = None
+        self.ops_lock_second = None
 
     def on_published(self, item_code: int, payload: bytes) -> None:
         if item_code == ITEM_MECH_STATUS:
@@ -573,6 +602,22 @@ class SesameLock(SesameDevice):
             if not self._login_event.is_set():
                 self._login_event.set()
 
+            if self._status_cb:
+                self._status_cb(self, self)
+
+        elif item_code == ITEM_DOOR_OPEN:
+            self.door_status = "open"
+            if self._status_cb:
+                self._status_cb(self, self)
+
+        elif item_code == ITEM_DOOR_CLOSED:
+            self.door_status = "closed"
+            if self._status_cb:
+                self._status_cb(self, self)
+
+        elif item_code == ITEM_OPS_TIMER_SETTING:
+            if len(payload) >= 2:
+                self.ops_lock_second = struct.unpack("<H", payload[0:2])[0]
             if self._status_cb:
                 self._status_cb(self, self)
 
@@ -616,6 +661,25 @@ class SesameLock(SesameDevice):
             second,
         )
         await self.send_command(ITEM_AUTOLOCK, payload, encrypt=True)
+
+    async def set_ops_lock_second(self, second: int) -> None:
+        """Configures the OpenSensor auto lock duration in seconds."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        payload = struct.pack("<H", second)
+        logger.info(
+            "Configuring OpenSensor auto lock duration [address=%s, seconds=%d]",
+            self.address,
+            second,
+        )
+        await self.send_command(ITEM_OPS_TIMER_SETTING, payload, encrypt=True)
+
+    async def calibrate_magnet(self) -> None:
+        """Triggers the lock to perform magnet calibration/angle correction."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        logger.info("Triggering magnet calibration [address=%s]", self.address)
+        await self.send_command(ITEM_MAGNET, b"", encrypt=True)
 
     async def fetch_and_flush_history(self) -> list[dict]:
         """Fetch and flush all available history records from the lock.
@@ -738,9 +802,11 @@ class SesameKeypad(SesameDevice, BaseKeypad):
         self._temp_fingerprints = {}
         self._sync_future = None
         self.scanned_fingerprint = None
+        self.scanned_passcode = None
         self.paired_locks = []
         self.card_registration_mode = False
         self.fingerprint_registration_mode = False
+        self.passcode_registration_mode = False
 
         self.battery_voltage = None
         self.battery_percentage = None
@@ -780,6 +846,21 @@ class SesameKeypad(SesameDevice, BaseKeypad):
         elif item_code == ITEM_PASSCODE_NOTIFY:
             parsed = self._parse_notify_payload(payload, is_passcode=True)
             self._temp_passcodes.update(parsed)
+            logger.info("ITEM_PASSCODE_NOTIFY received: parsed=%s, sync_future=%s, passcode_reg_mode=%s", parsed, self._sync_future, getattr(self, "passcode_registration_mode", False))
+            for uid, info in parsed.items():
+                is_new = uid not in self.passcodes
+                logger.info("Checking passcode notify: uid=%s, is_new=%s, existing_passcodes=%s", uid, is_new, list(self.passcodes.keys()))
+                if self._sync_future is None or (getattr(self, "passcode_registration_mode", False) and is_new):
+                    self.scanned_passcode = {
+                        "uid": uid,
+                        "code": info["code"],
+                        "type": info["type"]
+                    }
+                    logger.info("Captured scanned passcode: %s (is_new=%s)", self.scanned_passcode, is_new)
+                    if self._status_cb:
+                        self._status_cb(self, self)
+                else:
+                    logger.info("Skipped scanned passcode capture. sync_future=%s, passcode_reg_mode=%s, is_new=%s", self._sync_future, getattr(self, "passcode_registration_mode", False), is_new)
         
         elif item_code == ITEM_PASSCODE_LAST:
             self.passcodes = self._temp_passcodes
@@ -845,6 +926,37 @@ class SesameKeypad(SesameDevice, BaseKeypad):
 
         elif item_code == ITEM_KEYPAD_LOCK_LIST:
             self._parse_paired_locks(payload)
+
+        elif item_code == ITEM_PASSCODE_VERIFY_TO_CLOUD:
+            if len(payload) >= 2:
+                kb_type = payload[0]
+                id_len = payload[1]
+                if len(payload) >= 2 + id_len:
+                    kb_id = payload[2 : 2 + id_len]
+                    code_str = "".join(str(b) for b in kb_id)
+                    self.scanned_passcode = {
+                        "uid": kb_id.hex(),
+                        "code": code_str,
+                        "type": kb_type
+                    }
+                    logger.info("Captured scanned unregistered passcode (151): %s", self.scanned_passcode)
+                    if self._status_cb:
+                        self._status_cb(self, self)
+
+        elif item_code == ITEM_CARD_VERIFY_TO_CLOUD:
+            if len(payload) >= 2:
+                card_type = payload[0]
+                id_len = payload[1]
+                if len(payload) >= 2 + id_len:
+                    card_id = payload[2 : 2 + id_len]
+                    card_id_hex = card_id.hex()
+                    self.scanned_card = {
+                        "uid": card_id_hex,
+                        "type": card_type
+                    }
+                    logger.info("Captured scanned unregistered card (203): %s", self.scanned_card)
+                    if self._status_cb:
+                        self._status_cb(self, self)
 
     async def get_passcodes(self) -> dict[str, dict]:
         """Syncs the passcode database from the keypad and returns it."""
@@ -1048,6 +1160,14 @@ class SesameKeypad(SesameDevice, BaseKeypad):
         mode = 0x01 if active else 0x00
         await self.send_command(ITEM_FINGER_MODE_SET, bytes([mode]), encrypt=True)
         self.fingerprint_registration_mode = active
+
+    async def set_passcode_registration_mode(self, active: bool) -> None:
+        """Sets the keypad passcode mode: True for Add Mode, False for Verification Mode."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        mode = 0x01 if active else 0x00
+        await self.send_command(ITEM_PASSCODE_MODE_SET, bytes([mode]), encrypt=True)
+        self.passcode_registration_mode = active
 
     async def add_card(self, card_id: str, name: str, card_type: int = 0x80) -> None:
         """Registers/Adds a card to the keypad database."""
