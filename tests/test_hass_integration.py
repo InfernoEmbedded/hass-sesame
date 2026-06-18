@@ -850,6 +850,78 @@ async def test_otp_detection_and_deletion():
 
 
 @pytest.mark.asyncio
+async def test_fetch_and_flush_history_variable_lengths():
+    """Test SesameDevice.fetch_and_flush_history with variable payload lengths."""
+    from sesame_ble.sesame_client.device import SesameLock, ITEM_HISTORY, ITEM_HISTORY_DELETE
+    
+    mock_ble = MagicMock()
+    mock_ble.address = "AA:BB:CC:DD:EE:FF"
+    ad_data = MagicMock()
+    
+    device = SesameLock(mock_ble, ad_data, secret_key="0123456789abcdef0123456789abcdef")
+    device.is_logged_in = True
+    
+    # 1. 16-byte payload (manual unlock event)
+    payload_16 = struct.pack("<IBI7s", 100, 2, 1625097600, b"\x00" * 7)
+    
+    # 2. 48-byte payload (keypad passcode event)
+    param_bytes_48 = struct.pack("<HB", 2, 7) + b"otp_uid" + b"\x00" * 22
+    payload_48 = struct.pack("<IBI7s32s", 101, 11, 1625097700, b"\x00" * 7, param_bytes_48)
+    
+    # 3. 24-byte payload (variable custom event)
+    param_bytes_24 = struct.pack("<HB", 0, 3) + b"nfc" + b"\x00" * 3
+    payload_24 = struct.pack("<IBI7s8s", 102, 12, 1625097800, b"\x00" * 7, param_bytes_24)
+    
+    call_index = 0
+    async def mock_send_command(item_code, payload, encrypt=True):
+        nonlocal call_index
+        if item_code == ITEM_HISTORY:
+            assert payload == b"\x01"
+            if call_index == 0:
+                call_index += 1
+                return payload_16
+            elif call_index == 1:
+                call_index += 1
+                return payload_48
+            elif call_index == 2:
+                call_index += 1
+                return payload_24
+            else:
+                raise Exception("Command error: 5")
+        elif item_code == ITEM_HISTORY_DELETE:
+            assert len(payload) == 4
+            return b""
+        raise Exception(f"Unexpected item code: {item_code}")
+        
+    device.send_command = mock_send_command
+    
+    records = await device.fetch_and_flush_history()
+    
+    assert len(records) == 3
+    
+    # Verify manual event (16 bytes)
+    assert records[0]["record_id"] == 100
+    assert records[0]["type"] == 2
+    assert records[0]["timestamp"] == 1625097600
+    assert records[0]["tag"] == 0
+    assert records[0]["raw_parameter"] == ""
+    
+    # Verify 48-byte keypad passcode event
+    assert records[1]["record_id"] == 101
+    assert records[1]["type"] == 11
+    assert records[1]["timestamp"] == 1625097700
+    assert records[1]["tag"] == 2
+    assert records[1]["raw_parameter"] == b"otp_uid".hex()
+    
+    # Verify 24-byte variable event
+    assert records[2]["record_id"] == 102
+    assert records[2]["type"] == 12
+    assert records[2]["timestamp"] == 1625097800
+    assert records[2]["tag"] == 0
+    assert records[2]["raw_parameter"] == b"nfc".hex()
+
+
+@pytest.mark.asyncio
 async def test_person_name_resolution():
     """Test person entity resolution in SesameDeviceWrapper.resolve_history_record."""
     import sesame_ble

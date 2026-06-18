@@ -695,18 +695,24 @@ class SesameLock(SesameDevice):
             try:
                 # 0x01: Read oldest history record without deleting
                 payload = await self.send_command(ITEM_HISTORY, b"\x01", encrypt=True)
-                if len(payload) < 48:
+                if len(payload) < 16:
                     logger.warning("Received invalid history payload length: %d", len(payload))
                     break
 
-                # Parse history record
-                # ssm_history: id(4B) + type(1B) + ts(4B) + mech_status(7B) + param(32B) = 48B
-                record_id, history_type, ts, mech_status, param_bytes = struct.unpack("<IBI7s32s", payload)
+                # Parse history record header
+                # ssm_history header: id(4B) + type(1B) + ts(4B) + mech_status(7B) = 16B
+                record_id, history_type, ts, mech_status = struct.unpack("<IBI7s", payload[:16])
 
-                # Parse parameter/tag
-                tag = struct.unpack("<H", param_bytes[0:2])[0]
-                data_length = min(max(0, param_bytes[2]), 29)
-                raw_val = param_bytes[3 : 3 + data_length]
+                tag = 0
+                raw_val = b""
+
+                if len(payload) > 16:
+                    param_bytes = payload[16:]
+                    if len(param_bytes) >= 2:
+                        tag = struct.unpack("<H", param_bytes[0:2])[0]
+                        if len(param_bytes) >= 3:
+                            data_length = min(max(0, param_bytes[2]), len(param_bytes) - 3)
+                            raw_val = param_bytes[3 : 3 + data_length]
 
                 # Store the record details
                 record = {
