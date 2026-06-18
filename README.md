@@ -32,7 +32,9 @@ A high-performance, fully local Home Assistant custom integration for controllin
 
 ---
 
-## Installation
+## Installation & Components
+
+Installing the integration installs both components: the **Sesame BLE Lock Driver** (to communicate with locks) and the **Sesame Touch Keypad Manager** (to manage keypads and credentials).
 
 ### Manual Installation
 1. Download the latest source code or clone the repository.
@@ -47,6 +49,10 @@ A high-performance, fully local Home Assistant custom integration for controllin
            ├── const.py
            ├── manifest.json
            ├── services.yaml
+           ├── views.py
+           ├── static/
+           │   ├── index.html
+           │   └── panel.js
            └── ...
    ```
 4. **Restart** Home Assistant.
@@ -64,17 +70,60 @@ A high-performance, fully local Home Assistant custom integration for controllin
 
 ---
 
-## Passcode Management Services
+## Keypad Manager Sidebar Panel
 
-The integration exposes services specifically for managing local keypad passcodes on **Sesame Touch** / **Touch Pro** keypads.
+The integration automatically registers a custom sidebar dashboard called **Keypad Manager** (URL path `/keypads`, icon `mdi:dialpad`). This panel provides a rich, responsive user interface to perform local management tasks without configuration yaml or complex service calls:
+
+- 📋 **Credential Summary**: See at a glance the number of registered passcodes, cards, and fingerprints.
+- 🕒 **PIN Code Scheduler**: Add, delete, and rename keypad PINs, or define active schedules.
+- 💳 **NFC Card & Fingerprint Registration Wizard**: Guide step-by-step additions of new physical cards or fingerprints by activating the keypad's registration mode on the device and naming the tapped credentials.
+- 🔗 **Lock Pairing Manager**: Manage mapping links between Sesame Touch keypads and Sesame Locks.
+- 📜 **Lock Operation History Logs**: View and search local operation records (detailing NFC cards used, fingerprints scanned, PINs entered, Auto-Lock triggers, or manual/Home Assistant actions).
+
+---
+
+## Entity & Platform Reference
+
+Depending on the hardware configured, the integration creates the following Home Assistant entities:
+
+### 🔒 Sesame Lock Entities (Sesame 5 / 5 Pro)
+
+| Entity ID | Platform | Category | Description / Features |
+| :--- | :--- | :--- | :--- |
+| `lock.<name>` | `lock` | - | Standard lock control entity. Supported services: `lock.lock`, `lock.unlock`. Exposes current angle, lock position, and unlock position in state attributes. |
+| `sensor.<name>_battery` | `sensor` | Diagnostic | Reports real-time battery percentage. |
+| `number.<name>_auto_lock_delay` | `number` | Config | Configures the lock's auto-lock delay in seconds (0 to 3600 seconds). |
+| `button.<name>_set_locked_position` | `button` | Config | Calibrates the turn sensor by setting the current physical position as the **locked** angle. |
+| `button.<name>_set_unlocked_position` | `button` | Config | Calibrates the turn sensor by setting the current physical position as the **unlocked** angle. |
+| `sensor.<name>_locked_position` | `sensor` | Diagnostic | Reports the calibrated locked turn angle in degrees. |
+| `sensor.<name>_unlocked_position` | `sensor` | Diagnostic | Reports the calibrated unlocked turn angle in degrees. |
+| `sensor.<name>_current_angle` | `sensor` | Diagnostic | Reports the lock's current physical rotation angle in degrees. |
+
+### ⌨️ Sesame Touch Keypad Entities (Touch / Touch Pro)
+
+| Entity ID | Platform | Category | Description / Features |
+| :--- | :--- | :--- | :--- |
+| `sensor.<name>_battery` | `sensor` | Diagnostic | Reports real-time battery percentage. |
+| `sensor.<name>_registered_cards` | `sensor` | Diagnostic | Reports the number of registered NFC/IC cards. |
+| `sensor.<name>_registered_fingerprints` | `sensor` | Diagnostic | Reports the number of registered fingerprints. |
+| `sensor.<name>_registered_passcodes` | `sensor` | Diagnostic | Reports the number of registered passcodes. Exposes the list of passcodes (names and hex IDs) in its `passcodes` state attribute. |
+| `sensor.<name>_paired_locks` | `sensor` | Diagnostic | Reports the count of paired locks. Exposes detailed paired lock info (UUIDs, statuses) in its `paired_locks` state attribute. |
+| `select.<name>_pair_lock` | `select` | Config | Dropdown list of HA-configured Sesame locks not yet paired to this keypad. Selecting a lock pairs it. |
+| `select.<name>_unpair_lock` | `select` | Config | Dropdown list of locks paired to this keypad. Selecting a lock unpairs it. |
+
+---
+
+## Service Reference
+
+The integration exposes the following local services under the `sesame_ble` domain:
 
 ### 1. `sesame_ble.add_passcode`
-Adds a new passcode to the Sesame Touch keypad.
+Adds a new passcode PIN to the Sesame Touch keypad.
 
 | Field | Type | Required | Description | Example |
 | :--- | :--- | :--- | :--- | :--- |
-| `device_id` | Device | Yes | The Sesame Touch device target. | *Select device* |
-| `passcode` | String | Yes | Passcode PIN digits (between 4 and 16 digits, 0-9). | `"123456"` |
+| `device_id` | Device | Yes | The target Sesame Touch device entity. | *Select device* |
+| `passcode` | String | Yes | Passcode PIN digits (4-16 numeric characters, 0-9). | `"123456"` |
 | `name` | String | Yes | Name / Nickname to identify the passcode. | `"John Doe"` |
 
 ---
@@ -84,22 +133,42 @@ Deletes an existing passcode from the Sesame Touch keypad.
 
 | Field | Type | Required | Description | Example |
 | :--- | :--- | :--- | :--- | :--- |
-| `device_id` | Device | Yes | The Sesame Touch device target. | *Select device* |
-| `passcode_or_id` | String | Yes | The passcode PIN (e.g. `"123456"`) or its unique Hex ID (e.g. `"010203040506"`). | `"010203040506"` |
+| `device_id` | Device | Yes | The target Sesame Touch device entity. | *Select device* |
+| `passcode_or_id` | String | Yes | The passcode PIN (e.g. `"123456"`) or its unique Hex ID (e.g. `"0a0b0c..."`). | `"0a0b0c0d"` |
 
 > [!TIP]
-> You can retrieve the unique Hex ID of any passcode from the `Registered Passcodes` sensor's attributes. Using the Hex ID is recommended to avoid exposing raw PINs in logs or scripts.
+> You can retrieve the unique Hex ID of any passcode from the `Registered Passcodes` sensor's attributes. Using the Hex ID is recommended to avoid exposing raw PINs in automation logs.
 
 ---
 
 ### 3. `sesame_ble.update_passcode`
-Updates/renames the nickname of an existing passcode.
+Renames/updates the nickname of an existing passcode.
 
 | Field | Type | Required | Description | Example |
 | :--- | :--- | :--- | :--- | :--- |
-| `device_id` | Device | Yes | The Sesame Touch device target. | *Select device* |
-| `passcode_or_id` | String | Yes | The passcode PIN or its unique Hex ID to rename. | `"010203040506"` |
-| `name` | String | Yes | New name / nickname (maximum 20 characters). | `"John (Work PIN)"` |
+| `device_id` | Device | Yes | The target Sesame Touch device entity. | *Select device* |
+| `passcode_or_id` | String | Yes | The passcode PIN or its unique Hex ID to rename. | `"0a0b0c0d"` |
+| `name` | String | Yes | New name / nickname for the passcode (max 20 characters). | `"John (Work PIN)"` |
+
+---
+
+### 4. `sesame_ble.pair_lock`
+Pairs a configured Sesame Lock device directly to the Sesame Touch keypad.
+
+| Field | Type | Required | Description | Example |
+| :--- | :--- | :--- | :--- | :--- |
+| `device_id` | Device | Yes | The target Sesame Touch keypad device. | *Select device* |
+| `lock_device_id` | Device | Yes | The Sesame Lock device configured in Home Assistant to pair. | *Select device* |
+
+---
+
+### 5. `sesame_ble.unpair_lock`
+Unpairs a physical lock from the Sesame Touch keypad.
+
+| Field | Type | Required | Description | Example |
+| :--- | :--- | :--- | :--- | :--- |
+| `device_id` | Device | Yes | The target Sesame Touch keypad device. | *Select device* |
+| `lock_uuid` | String | Yes | The raw UUID of the lock to unpair. | `"01234567-89ab-cdef-0123-456789abcdef"` |
 
 ---
 
