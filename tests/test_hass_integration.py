@@ -328,6 +328,9 @@ async def test_scheduler_sync_and_apply_schedules():
     mock_device.get_fingerprints = AsyncMock()
     mock_device.add_passcode = AsyncMock()
     mock_device.delete_passcode = AsyncMock()
+    mock_device.apply_passcode_schedules = BaseKeypad.apply_passcode_schedules.__get__(
+        mock_device, BaseKeypad
+    )
 
     # Mock store
     mock_store = AsyncMock()

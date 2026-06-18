@@ -759,6 +759,70 @@ class BaseKeypad:
         """Update the nickname of an existing passcode on the keypad."""
         raise NotImplementedError()
 
+    async def apply_passcode_schedules(self, logical_passcodes: dict[str, dict]) -> bool:
+        """Evaluates schedules and synchronizes passcodes.
+
+        This implements the virtualization of time-windowed passcodes by checking
+        start/end times and adding/deleting passcodes accordingly.
+
+        Drivers can override this method if the hardware has native support for
+        scheduled or time-windowed passcodes.
+
+        Returns:
+            bool: True if any changes were made, False otherwise.
+        """
+        import datetime
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        def parse_dt(dt_str: str) -> datetime.datetime | None:
+            if not dt_str:
+                return None
+            dt_str = dt_str.strip()
+            try:
+                return datetime.datetime.fromisoformat(dt_str)
+            except ValueError:
+                pass
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%d-%m-%Y %H:%M", "%Y-%m-%d"):
+                try:
+                    return datetime.datetime.strptime(dt_str, fmt)
+                except ValueError:
+                    pass
+            return None
+
+        now = datetime.datetime.now()
+        changed = False
+
+        for uid, logical_info in list(logical_passcodes.items()):
+            start_dt = parse_dt(logical_info.get("start", ""))
+            end_dt = parse_dt(logical_info.get("end", ""))
+
+            should_be_active = True
+            if start_dt and now < start_dt:
+                should_be_active = False
+            if end_dt and now >= end_dt:
+                should_be_active = False
+
+            is_physically_active = uid in self.passcodes
+
+            if should_be_active and not is_physically_active:
+                _logger.info("Scheduler: Adding passcode '%s' via virtualization", logical_info["name"])
+                try:
+                    await self.add_passcode(logical_info["code"], logical_info["name"])
+                    changed = True
+                except Exception as e:
+                    _logger.error("Failed to add passcode '%s': %s", logical_info["name"], e)
+            elif not should_be_active and is_physically_active:
+                _logger.info("Scheduler: Removing passcode '%s' via virtualization", logical_info["name"])
+                try:
+                    await self.delete_passcode(uid)
+                    changed = True
+                except Exception as e:
+                    _logger.error("Failed to delete passcode '%s': %s", logical_info["name"], e)
+
+        return changed
+
     async def get_cards(self) -> dict[str, dict]:
         """Fetch/sync NFC cards from the keypad."""
         raise NotImplementedError()

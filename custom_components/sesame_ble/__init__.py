@@ -357,33 +357,9 @@ class SesameDeviceWrapper:
                     del self.logical_fingerprints[uid]
                     changed = True
 
-            # 2. Evaluate schedules
-            for uid, logical_info in list(self.logical_passcodes.items()):
-                start_dt = parse_datetime(logical_info.get("start", ""))
-                end_dt = parse_datetime(logical_info.get("end", ""))
-
-                should_be_active = True
-                if start_dt and now < start_dt:
-                    should_be_active = False
-                if end_dt and now >= end_dt:
-                    should_be_active = False
-
-                is_physically_active = uid in physical_passcodes
-
-                if should_be_active and not is_physically_active:
-                    logger.info("Scheduler: Adding passcode '%s'", logical_info["name"])
-                    try:
-                        await self.device.add_passcode(logical_info["code"], logical_info["name"])
-                        changed = True
-                    except Exception as e:
-                        logger.error("Failed to add passcode '%s': %s", logical_info["name"], e)
-                elif not should_be_active and is_physically_active:
-                    logger.info("Scheduler: Removing passcode '%s'", logical_info["name"])
-                    try:
-                        await self.device.delete_passcode(uid)
-                        changed = True
-                    except Exception as e:
-                        logger.error("Failed to delete passcode '%s': %s", logical_info["name"], e)
+            # 2. Evaluate schedules via virtualization or hardware implementation
+            if await self.device.apply_passcode_schedules(self.logical_passcodes):
+                changed = True
 
             if changed:
                 await self.store.async_save({
