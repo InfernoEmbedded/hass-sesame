@@ -83,6 +83,22 @@ The integration automatically registers a custom sidebar dashboard called **Keyp
 - 🔗 **Lock Pairing Manager**: Manage mapping links between Sesame Touch keypads and Sesame Locks.
 - 📜 **Lock Operation History Logs**: View and search local operation records (detailing NFC cards used, fingerprints scanned, PINs entered, Auto-Lock triggers, or manual/Home Assistant actions).
 
+### Passcode Types & Scheduling
+
+When adding or updating a passcode via the **Keypad Manager** dashboard, you can define three types of scheduling and access restrictions:
+
+1. **Temporary Passcodes (Date/Time Windowed)**:
+   - Define a specific **Start Date & Time** and **End Date & Time** using the calendar pickers.
+   - The passcode will only be active on the keypad within this specific date/time window. Perfect for guest rentals, delivery workers, or short-term visitors.
+
+2. **One-Time Passcodes (OTP / Disposable)**:
+   - Toggle the **One-Time Passcode (OTP)** switch to `On`.
+   - The passcode allows exactly **one successful unlock event** on the paired lock. Once the unlock history record is retrieved by Home Assistant, the integration immediately and automatically deletes the passcode from both the Home Assistant database and the physical keypad.
+
+3. **Repeating/Scheduled Passcodes (Weekly Day & Time Constraints)**:
+   - Use the **Day Constraints** checkboxes (Monday through Sunday) and specify a **Daily Start Time** and **Daily End Time** (e.g., `09:00` to `17:00`).
+   - The passcode will only function on the specified days of the week during the specified hours. Excellent for cleaners, dog walkers, or office staff working recurring shifts.
+
 ---
 
 ## Entity & Platform Reference
