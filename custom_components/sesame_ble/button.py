@@ -12,7 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .__init__ import SesameDeviceWrapper
+from . import SesameDeviceWrapper, is_keypad_model
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,10 @@ async def async_setup_entry(
     wrapper: SesameDeviceWrapper = hass.data[DOMAIN][entry.entry_id]
 
     # Keypads and Touch devices do not have lock positions to calibrate
-    if "TOUCH" in wrapper.model_name:
+    if is_keypad_model(wrapper.model_name):
         logger.debug("Skipping button setup for Sesame Touch device %s", entry.unique_id)
         return
+
 
     async_add_entities([
         SesameSetLockedPositionButton(wrapper),
@@ -47,18 +49,8 @@ class SesameBaseButton(ButtonEntity):
         self._attr_name = name_suffix
         self._attr_unique_id = f"{wrapper.entry.unique_id}_{unique_id_suffix}"
         self._attr_entity_category = EntityCategory.CONFIG
-        self._unregister_status_callback = None
+    # Button entities are stateless action triggers and do not register status update listeners
 
-    async def async_added_to_hass(self) -> None:
-        """Register callbacks when added to Home Assistant."""
-        self._unregister_status_callback = self.wrapper.register_update_listener(
-            self.async_write_ha_state
-        )
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Unregister callbacks when removed."""
-        if self._unregister_status_callback:
-            self._unregister_status_callback()
 
     @property
     def available(self) -> bool:

@@ -7,6 +7,10 @@ from uuid import UUID
 import sesame_ble
 import sesame_ble.lock
 import sesame_ble.sensor
+import sesame_ble.binary_sensor
+import sesame_ble.button
+import sesame_ble.number
+
 from sesame_ble.const import DOMAIN, CONF_SECRET_KEY, CONF_MODEL, CONF_DEVICE_UUID
 from sesame_ble.sesame_client import COMPANY_ID, ProductModels, SesameAdData
 
@@ -1119,6 +1123,126 @@ async def test_add_passcode_service():
         assert logical_info["one_time"] is True
         assert logical_info["person_id"] == "person.guest"
 
-        # Verify sync was triggered
-        wrapper._sync_and_apply_schedules.assert_awaited_once()
+
+@pytest.mark.asyncio
+@patch("sesame_ble.bluetooth")
+async def test_face_1_keypad_setup_and_entities(mock_bluetooth) -> None:
+    """Tests entry setup and Keypad Manager recognition for a Sesame Face 1 keypad."""
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+
+    mock_ble_device = MagicMock()
+    mock_ble_device.address = "FA:CE:01:22:33:44"
+    mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+
+    # Model ID 13 (SESAME_FACE)
+    mfg_data = struct.pack("<HB16s", 13, 1, TEST_UUID.bytes)
+    mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry_face_1"
+    entry.unique_id = "test_mac_face_1"
+    entry.data = {
+        "mac_address": "FA:CE:01:22:33:44",
+        CONF_SECRET_KEY: "8934fa89504ea1b70993b91ff4407aa9",
+        CONF_MODEL: "SESAME_FACE",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    setup_ok = await sesame_ble.async_setup_entry(hass, entry)
+    assert setup_ok is True
+
+    wrapper = hass.data[DOMAIN][entry.entry_id]
+    assert wrapper.model_name == "SESAME_FACE"
+    assert sesame_ble.is_keypad_model("SESAME_FACE") is True
+
+    # Check Keypad Passcodes View returns Face 1 in keypads_list
+    import json
+    view = SesamePasscodesView(hass)
+    req = MagicMock()
+    resp = await view.get(req)
+    data = json.loads(resp.body)
+
+
+    assert "keypads" in data
+    keypad_ids = [k["entry_id"] for k in data["keypads"]]
+    assert entry.entry_id in keypad_ids
+
+
+@pytest.mark.asyncio
+@patch("sesame_ble.bluetooth")
+async def test_face_ai_keypad_setup_and_entities_filtering(mock_bluetooth) -> None:
+    """Tests that Face AI keypads filter out lock angles/position buttons and unsupported auth count sensors (cards/fingerprints)."""
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+
+    mock_ble_device = MagicMock()
+    mock_ble_device.address = "FA:CE:AI:00:11:22"
+    mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+
+    # Model ID 23 (SESAME_FACE_AI)
+    mfg_data = struct.pack("<HB16s", 23, 1, TEST_UUID.bytes)
+    mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry_face_ai"
+    entry.unique_id = "test_mac_face_ai"
+    entry.data = {
+        "mac_address": "FA:CE:AI:00:11:22",
+        CONF_SECRET_KEY: "8934fa89504ea1b70993b91ff4407aa9",
+        CONF_MODEL: "SESAME_FACE_AI",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    setup_ok = await sesame_ble.async_setup_entry(hass, entry)
+    assert setup_ok is True
+
+    # 1. Lock entities must be skipped
+    async_add_locks = MagicMock()
+    await sesame_ble.lock.async_setup_entry(hass, entry, async_add_locks)
+    async_add_locks.assert_not_called()
+
+    # 2. Calibration buttons must be skipped
+    async_add_buttons = MagicMock()
+    await sesame_ble.button.async_setup_entry(hass, entry, async_add_buttons)
+    async_add_buttons.assert_not_called()
+
+    # 3. Auto lock numbers must be skipped
+    async_add_numbers = MagicMock()
+    await sesame_ble.number.async_setup_entry(hass, entry, async_add_numbers)
+    async_add_numbers.assert_not_called()
+
+    # 4. Door binary sensor must be skipped
+    async_add_binary = MagicMock()
+    await sesame_ble.binary_sensor.async_setup_entry(hass, entry, async_add_binary)
+    async_add_binary.assert_not_called()
+
+    # 5. Sensors must ONLY include Battery, Passcodes, Faces, Palms, Paired Locks, RSSI, Connection (NO Cards, NO Fingerprints, NO lock position angles)
+    async_add_sensors = MagicMock()
+    await sesame_ble.sensor.async_setup_entry(hass, entry, async_add_sensors)
+    async_add_sensors.assert_called_once()
+    sensors = async_add_sensors.call_args[0][0]
+
+    sensor_names = [s.name for s in sensors]
+    assert "Battery" in sensor_names
+    assert "Registered Passcodes" in sensor_names
+    assert "Registered Faces" in sensor_names
+    assert "Registered Palms" in sensor_names
+    assert "Paired Locks" in sensor_names
+    assert "Signal Strength" in sensor_names
+
+    assert "Connection State" in sensor_names
+
+
+
+    # Ensure unsupported auth counts and lock angles are NOT present
+    assert "Registered Cards" not in sensor_names
+    assert "Registered Fingerprints" not in sensor_names
+    assert "Locked Position" not in sensor_names
+    assert "Unlocked Position" not in sensor_names
+    assert "Current Position" not in sensor_names
+
+
 

@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .__init__ import SesameDeviceWrapper
+from .__init__ import SesameDeviceWrapper, is_keypad_model
 from .sesame_client import SesameLock
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ async def async_setup_entry(
     model_name = wrapper.model_name
 
     # Keypads and Touch devices do not have lock entities
-    if "TOUCH" in model_name:
+    if is_keypad_model(model_name):
         logger.debug("Skipping lock entity setup for Sesame Touch device %s", entry.unique_id)
         return
 

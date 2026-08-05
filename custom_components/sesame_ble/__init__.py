@@ -55,12 +55,37 @@ def parse_datetime(dt_str: str) -> datetime.datetime | None:
     return None
 
 
-def is_keypad_model(model_name: str) -> bool:
+def is_keypad_model(model_name: str | None) -> bool:
     """Returns True if the model is a keypad (Touch, Face, AI)."""
-    return any(k in model_name for k in ("TOUCH", "FACE", "AI"))
+    if not model_name:
+        return False
+    name_upper = str(model_name).upper()
+    return any(k in name_upper for k in ("TOUCH", "FACE", "AI", "KEYPAD"))
+
+
+def get_supported_auth_methods(model_name: str | None) -> list[str]:
+    """Returns list of supported auth methods ('passcode', 'card', 'fingerprint', 'face', 'palm') for a given model."""
+    if not model_name or not is_keypad_model(model_name):
+        return []
+    
+    m = str(model_name).upper()
+
+    # Face AI / Face Pro AI models: Pure AI biometrics (Face, Palm, Passcode). No NFC card, No Fingerprint scanner.
+    if "AI" in m:
+        return ["passcode", "face", "palm"]
+
+    # Face 1 / Face Pro / Face 2 models: Full biometrics + NFC + Fingerprint + PIN (Face, Fingerprint, Card, Passcode).
+    if "FACE" in m:
+        return ["passcode", "card", "fingerprint", "face"]
+
+    # Touch / Touch Pro / Touch 2 models: Fingerprint + Card + PIN.
+    return ["passcode", "card", "fingerprint"]
+
+
 
 
 class SesameDeviceWrapper:
+
     """Wrapper class to coordinate connection and updates for Sesame BLE devices."""
 
     def __init__(
@@ -260,24 +285,35 @@ class SesameDeviceWrapper:
             caller = "Keypad"
 
         if keypad_wrapper:
-            if tag == 0:  # NFC Card
+            if tag == 0 and "card" in get_supported_auth_methods(keypad_wrapper.model_name):
                 method = "NFC Card"
                 card_info = keypad_wrapper.logical_cards.get(raw_param, {})
                 caller = card_info.get("name", f"NFC Card ({raw_param[:8]})")
                 person_id = card_info.get("person_id")
-            elif tag == 1:  # Fingerprint
+            elif tag == 1 and "fingerprint" in get_supported_auth_methods(keypad_wrapper.model_name):
                 method = "Fingerprint"
                 finger_info = keypad_wrapper.logical_fingerprints.get(raw_param, {})
                 caller = finger_info.get("name", f"Fingerprint ({raw_param[:8]})")
                 person_id = finger_info.get("person_id")
-            elif tag == 2:  # Passcode
+            elif tag == 2:
                 method = "Passcode"
                 pass_info = keypad_wrapper.logical_passcodes.get(raw_param, {})
                 caller = pass_info.get("name", f"Passcode ({raw_param[:8]})")
                 person_id = pass_info.get("person_id")
+            elif tag == 3 or (tag == 0 and "face" in get_supported_auth_methods(keypad_wrapper.model_name) and "card" not in get_supported_auth_methods(keypad_wrapper.model_name)):
+                method = "Face"
+                face_info = getattr(keypad_wrapper, "logical_faces", {}).get(raw_param, {})
+                caller = face_info.get("name", f"Face ({raw_param[:8]})")
+                person_id = face_info.get("person_id")
+            elif tag == 4 or (tag == 1 and "palm" in get_supported_auth_methods(keypad_wrapper.model_name) and "fingerprint" not in get_supported_auth_methods(keypad_wrapper.model_name)):
+                method = "Palm"
+                palm_info = getattr(keypad_wrapper, "logical_palms", {}).get(raw_param, {})
+                caller = palm_info.get("name", f"Palm ({raw_param[:8]})")
+                person_id = palm_info.get("person_id")
             elif tag in (5, 6):  # TouchPro UUID, Touch UUID
                 method = "Keypad"
                 caller = keypad_wrapper.entry.title
+
         else:
             # Fallback when no keypad is paired or found
             name_str = None
@@ -659,8 +695,69 @@ class SesameDeviceWrapper:
         await self.device.disconnect()
 
 
+async def async_cleanup_orphaned_keypad_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove orphaned entities from entity registry if keypad device model does not support them."""
+    model_name = entry.data.get(CONF_MODEL)
+    if not is_keypad_model(model_name):
+        return
+
+    try:
+        from homeassistant.helpers import entity_registry as er
+        entity_reg = er.async_get(hass)
+        entries = er.async_entries_for_config_entry(entity_reg, entry.entry_id)
+        supported_methods = get_supported_auth_methods(model_name)
+
+        # Lock-only unique ID suffixes that must not exist for keypads
+        lock_only_suffixes = (
+            "_door",
+            "_auto_lock_delay",
+            "_opensensor_auto_lock_delay",
+            "_set_locked_position",
+            "_set_unlocked_position",
+            "_calibrate_magnet",
+            "_locked_position",
+            "_unlocked_position",
+            "_current_position",
+            "_current_angle",
+            "_setup_qr_code",
+        )
+
+        for entity_entry in entries:
+            # 0. Lock domain cleanup for keypads
+            if entity_entry.domain == "lock":
+                logger.info("Removing lock entity %s from keypad device", entity_entry.entity_id)
+                entity_reg.async_remove(entity_entry.entity_id)
+                continue
+
+            uid = entity_entry.unique_id
+
+            # 1. Lock-only entity cleanup
+            if any(uid.endswith(s) for s in lock_only_suffixes):
+                logger.info("Removing orphaned lock-only entity %s (%s) from keypad device", entity_entry.entity_id, uid)
+                entity_reg.async_remove(entity_entry.entity_id)
+                continue
+
+
+            # 2. Unsupported auth count sensor cleanup
+            if uid.endswith("_registered_cards") and "card" not in supported_methods:
+                logger.info("Removing orphaned cards sensor %s (%s) from keypad", entity_entry.entity_id, uid)
+                entity_reg.async_remove(entity_entry.entity_id)
+            elif uid.endswith("_registered_fingerprints") and "fingerprint" not in supported_methods:
+                logger.info("Removing orphaned fingerprints sensor %s (%s) from keypad", entity_entry.entity_id, uid)
+                entity_reg.async_remove(entity_entry.entity_id)
+            elif uid.endswith("_registered_faces") and "face" not in supported_methods:
+                logger.info("Removing orphaned faces sensor %s (%s) from keypad", entity_entry.entity_id, uid)
+                entity_reg.async_remove(entity_entry.entity_id)
+            elif uid.endswith("_registered_palms") and "palm" not in supported_methods:
+                logger.info("Removing orphaned palms sensor %s (%s) from keypad", entity_entry.entity_id, uid)
+                entity_reg.async_remove(entity_entry.entity_id)
+    except Exception as e:
+        logger.warning("Failed to clean up orphaned keypad entities: %s", e)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Candy House Sesame BLE from a config entry."""
+
     mac_address = entry.data["mac_address"]
     secret_key = entry.data[CONF_SECRET_KEY]
     model_name = entry.data[CONF_MODEL]
@@ -742,6 +839,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             SesamePasscodesView,
             SesameCardsView,
             SesameFingerprintsView,
+            SesameFacesView,
+            SesamePalmsView,
             SesameCardsRegisterView,
             SesameFingerprintsRegisterView,
             SesamePasscodesRegisterView,
@@ -760,6 +859,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             pass
         try:
             hass.http.register_view(SesameFingerprintsView(hass))
+        except Exception:
+            pass
+        try:
+            hass.http.register_view(SesameFacesView(hass))
+        except Exception:
+            pass
+        try:
+            hass.http.register_view(SesamePalmsView(hass))
         except Exception:
             pass
         try:
@@ -790,6 +897,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.http.register_view(SesameKeypadUnpairView(hass))
         except Exception:
             pass
+
 
         import os
         static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -826,7 +934,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Clean up orphaned entities from entity registry if keypad device model does not support them
+    await async_cleanup_orphaned_keypad_entities(hass, entry)
+
     # Register passcode services if this is a keypad device
+
     if is_keypad_model(model_name):
 
         async def handle_add_passcode(call: ServiceCall) -> None:

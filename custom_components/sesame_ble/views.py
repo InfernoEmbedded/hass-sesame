@@ -9,8 +9,11 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from . import SesameDeviceWrapper, parse_datetime
+from . import SesameDeviceWrapper, parse_datetime, is_keypad_model, get_supported_auth_methods
+
 from .sesame_client import BaseKeypad
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,7 @@ class SesamePasscodesView(HomeAssistantView):
         for entry_id, other_wrapper in self.hass.data[DOMAIN].items():
             if entry_id == "views_registered":
                 continue
-            if not hasattr(other_wrapper, "model_name") or "TOUCH" not in other_wrapper.model_name:
+            if not is_keypad_model(getattr(other_wrapper, "model_name", None)):
                 device_uuid = ""
                 if hasattr(other_wrapper, "adv_data") and other_wrapper.adv_data:
                     device_uuid = str(other_wrapper.adv_data.device_uuid)
@@ -52,8 +55,9 @@ class SesamePasscodesView(HomeAssistantView):
 
         keypads_list = []
         for entry_id, wrapper in self.hass.data[DOMAIN].items():
-            if not hasattr(wrapper, "model_name") or "TOUCH" not in wrapper.model_name:
+            if not is_keypad_model(getattr(wrapper, "model_name", None)):
                 continue
+
 
             # Trigger background sync of physical keypad in a safe asyncio task,
             # so the HTTP GET request returns instantly and doesn't block the UI.
@@ -98,6 +102,24 @@ class SesamePasscodesView(HomeAssistantView):
                     "person_id": info.get("person_id", None),
                 })
 
+            faces_data = []
+            for uid, info in getattr(wrapper, "logical_faces", {}).items():
+                faces_data.append({
+                    "uid": uid,
+                    "name": info["name"],
+                    "type": info.get("type", 0x80),
+                    "person_id": info.get("person_id", None),
+                })
+
+            palms_data = []
+            for uid, info in getattr(wrapper, "logical_palms", {}).items():
+                palms_data.append({
+                    "uid": uid,
+                    "name": info["name"],
+                    "type": info.get("type", 0x80),
+                    "person_id": info.get("person_id", None),
+                })
+
             paired_locks_data = []
             if hasattr(wrapper.device, "paired_locks"):
                 for lock_info in wrapper.device.paired_locks:
@@ -125,9 +147,12 @@ class SesamePasscodesView(HomeAssistantView):
             keypads_list.append({
                 "entry_id": entry_id,
                 "name": f"Sesame {wrapper.model_name} ({wrapper.ble_device.name or wrapper.ble_device.address})",
+                "model_name": wrapper.model_name,
+                "supported_auth_methods": get_supported_auth_methods(wrapper.model_name),
                 "mac_address": wrapper.ble_device.address,
                 "is_connected": wrapper.device.is_connected,
                 "is_logged_in": wrapper.device.is_logged_in,
+
                 "qr_url": qr_info["qr_url"] if qr_info else None,
                 "qr_image_url": qr_info["qr_image_url"] if qr_info else None,
                 "secret_key": qr_info["secret_key"] if qr_info else None,
@@ -135,11 +160,14 @@ class SesamePasscodesView(HomeAssistantView):
                 "passcodes": passcodes_data,
                 "cards": cards_data,
                 "fingerprints": fingerprints_data,
+                "faces": faces_data,
+                "palms": palms_data,
                 "paired_locks": paired_locks_data,
                 "scanned_card": wrapper.device.scanned_card if isinstance(getattr(wrapper.device, "scanned_card", None), dict) else None,
                 "scanned_fingerprint": wrapper.device.scanned_fingerprint if isinstance(getattr(wrapper.device, "scanned_fingerprint", None), dict) else None,
                 "scanned_passcode": wrapper.device.scanned_passcode if isinstance(getattr(wrapper.device, "scanned_passcode", None), dict) else None,
             })
+
 
 
         return self.json({"keypads": keypads_list, "all_locks": all_locks})
@@ -535,7 +563,202 @@ class SesameFingerprintsView(HomeAssistantView):
             return self.json({"error": f"Failed to delete fingerprint: {e}"}, status_code=500)
 
 
+class SesameFacesView(HomeAssistantView):
+    """View to handle face recognition management (renaming and deleting)."""
+
+    url = "/api/sesame_ble/faces"
+    name = "api:sesame_ble:faces"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the view."""
+        self.hass = hass
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Update a face name and person linkage."""
+        try:
+            data = await request.json()
+        except ValueError:
+            return self.json({"error": "Invalid JSON payload"}, status_code=400)
+
+        entry_id = data.get("entry_id")
+        uid = data.get("uid")
+        name = data.get("name", "").strip()
+        person_id = data.get("person_id")
+        if person_id == "":
+            person_id = None
+
+        if not entry_id or entry_id not in self.hass.data[DOMAIN]:
+            return self.json({"error": "Invalid entry_id"}, status_code=400)
+        if not uid:
+            return self.json({"error": "Face UID is required"}, status_code=400)
+        if not name:
+            return self.json({"error": "Name is required"}, status_code=400)
+
+        wrapper = self.hass.data[DOMAIN][entry_id]
+
+        if not hasattr(wrapper, "logical_faces"):
+            wrapper.logical_faces = {}
+
+        try:
+            if uid in wrapper.logical_faces:
+                wrapper.logical_faces[uid]["name"] = name
+                wrapper.logical_faces[uid]["person_id"] = person_id
+                await wrapper.store.async_save({
+                    "passcodes": wrapper.logical_passcodes,
+                    "cards": wrapper.logical_cards,
+                    "fingerprints": wrapper.logical_fingerprints,
+                    "faces": wrapper.logical_faces,
+                    "palms": getattr(wrapper, "logical_palms", {}),
+                })
+                wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
+                return self.json({"success": True})
+            else:
+                wrapper.logical_faces[uid] = {"name": name, "type": 0x80, "person_id": person_id}
+                await wrapper.store.async_save({
+                    "passcodes": wrapper.logical_passcodes,
+                    "cards": wrapper.logical_cards,
+                    "fingerprints": wrapper.logical_fingerprints,
+                    "faces": wrapper.logical_faces,
+                    "palms": getattr(wrapper, "logical_palms", {}),
+                })
+                return self.json({"success": True})
+        except Exception as e:
+            return self.json({"error": f"Failed to rename face: {e}"}, status_code=500)
+
+    async def delete(self, request: web.Request) -> web.Response:
+        """Delete a face."""
+        try:
+            data = await request.json()
+        except ValueError:
+            return self.json({"error": "Invalid JSON payload"}, status_code=400)
+
+        entry_id = data.get("entry_id")
+        uid = data.get("uid")
+
+        if not entry_id or entry_id not in self.hass.data[DOMAIN]:
+            return self.json({"error": "Invalid entry_id"}, status_code=400)
+        if not uid:
+            return self.json({"error": "Face UID is required"}, status_code=400)
+
+        wrapper = self.hass.data[DOMAIN][entry_id]
+
+        try:
+            if hasattr(wrapper, "logical_faces") and uid in wrapper.logical_faces:
+                del wrapper.logical_faces[uid]
+                await wrapper.store.async_save({
+                    "passcodes": wrapper.logical_passcodes,
+                    "cards": wrapper.logical_cards,
+                    "fingerprints": wrapper.logical_fingerprints,
+                    "faces": wrapper.logical_faces,
+                    "palms": getattr(wrapper, "logical_palms", {}),
+                })
+
+            asyncio.create_task(wrapper._sync_and_apply_schedules())
+            return self.json({"success": True})
+        except Exception as e:
+            return self.json({"error": f"Failed to delete face: {e}"}, status_code=500)
+
+
+class SesamePalmsView(HomeAssistantView):
+    """View to handle palm recognition management (renaming and deleting)."""
+
+    url = "/api/sesame_ble/palms"
+    name = "api:sesame_ble:palms"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the view."""
+        self.hass = hass
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Update a palm name and person linkage."""
+        try:
+            data = await request.json()
+        except ValueError:
+            return self.json({"error": "Invalid JSON payload"}, status_code=400)
+
+        entry_id = data.get("entry_id")
+        uid = data.get("uid")
+        name = data.get("name", "").strip()
+        person_id = data.get("person_id")
+        if person_id == "":
+            person_id = None
+
+        if not entry_id or entry_id not in self.hass.data[DOMAIN]:
+            return self.json({"error": "Invalid entry_id"}, status_code=400)
+        if not uid:
+            return self.json({"error": "Palm UID is required"}, status_code=400)
+        if not name:
+            return self.json({"error": "Name is required"}, status_code=400)
+
+        wrapper = self.hass.data[DOMAIN][entry_id]
+
+        if not hasattr(wrapper, "logical_palms"):
+            wrapper.logical_palms = {}
+
+        try:
+            if uid in wrapper.logical_palms:
+                wrapper.logical_palms[uid]["name"] = name
+                wrapper.logical_palms[uid]["person_id"] = person_id
+                await wrapper.store.async_save({
+                    "passcodes": wrapper.logical_passcodes,
+                    "cards": wrapper.logical_cards,
+                    "fingerprints": wrapper.logical_fingerprints,
+                    "faces": getattr(wrapper, "logical_faces", {}),
+                    "palms": wrapper.logical_palms,
+                })
+                wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
+                return self.json({"success": True})
+            else:
+                wrapper.logical_palms[uid] = {"name": name, "type": 0x80, "person_id": person_id}
+                await wrapper.store.async_save({
+                    "passcodes": wrapper.logical_passcodes,
+                    "cards": wrapper.logical_cards,
+                    "fingerprints": wrapper.logical_fingerprints,
+                    "faces": getattr(wrapper, "logical_faces", {}),
+                    "palms": wrapper.logical_palms,
+                })
+                return self.json({"success": True})
+        except Exception as e:
+            return self.json({"error": f"Failed to rename palm: {e}"}, status_code=500)
+
+    async def delete(self, request: web.Request) -> web.Response:
+        """Delete a palm."""
+        try:
+            data = await request.json()
+        except ValueError:
+            return self.json({"error": "Invalid JSON payload"}, status_code=400)
+
+        entry_id = data.get("entry_id")
+        uid = data.get("uid")
+
+        if not entry_id or entry_id not in self.hass.data[DOMAIN]:
+            return self.json({"error": "Invalid entry_id"}, status_code=400)
+        if not uid:
+            return self.json({"error": "Palm UID is required"}, status_code=400)
+
+        wrapper = self.hass.data[DOMAIN][entry_id]
+
+        try:
+            if hasattr(wrapper, "logical_palms") and uid in wrapper.logical_palms:
+                del wrapper.logical_palms[uid]
+                await wrapper.store.async_save({
+                    "passcodes": wrapper.logical_passcodes,
+                    "cards": wrapper.logical_cards,
+                    "fingerprints": wrapper.logical_fingerprints,
+                    "faces": getattr(wrapper, "logical_faces", {}),
+                    "palms": wrapper.logical_palms,
+                })
+
+            asyncio.create_task(wrapper._sync_and_apply_schedules())
+            return self.json({"success": True})
+        except Exception as e:
+            return self.json({"error": f"Failed to delete palm: {e}"}, status_code=500)
+
+
 class SesameCardsRegisterView(HomeAssistantView):
+
     """View to handle card registration mode (start/stop/status)."""
 
     url = "/api/sesame_ble/cards/register"
@@ -825,8 +1048,9 @@ class SesameLockHistoryView(HomeAssistantView):
         for entry_id, wrapper in self.hass.data[DOMAIN].items():
             if entry_id == "views_registered":
                 continue
-            if not hasattr(wrapper, "model_name") or "TOUCH" not in wrapper.model_name:
+            if not is_keypad_model(getattr(wrapper, "model_name", None)):
                 locks.append(wrapper)
+
                 
         if not locks:
             return None

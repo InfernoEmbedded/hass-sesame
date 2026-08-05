@@ -13,7 +13,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .__init__ import SesameDeviceWrapper
+from . import SesameDeviceWrapper, is_keypad_model
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ async def async_setup_entry(
     wrapper: SesameDeviceWrapper = hass.data[DOMAIN][entry.entry_id]
 
     # Only Keypads and Touch devices support lock pairing management
-    if "TOUCH" not in wrapper.model_name:
+    if not is_keypad_model(wrapper.model_name):
         logger.debug("Skipping select setup for Sesame Lock device %s", entry.unique_id)
         return
 
@@ -101,8 +103,9 @@ class SesameTouchPairLockSelect(SesameTouchBaseSelect):
         for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
             if entry_id == "views_registered":
                 continue
-            if not hasattr(other_wrapper, "model_name") or "TOUCH" in other_wrapper.model_name:
+            if not hasattr(other_wrapper, "model_name") or is_keypad_model(other_wrapper.model_name):
                 continue
+
             
             lock_uuid = str(other_wrapper.adv_data.device_uuid).lower()
             if lock_uuid not in paired_uuids:

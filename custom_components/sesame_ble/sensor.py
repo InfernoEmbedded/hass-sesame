@@ -16,8 +16,11 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .__init__ import SesameDeviceWrapper
+from .__init__ import SesameDeviceWrapper, is_keypad_model, get_supported_auth_methods
+
+
 from .sesame_client import SesameKeypad
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +37,27 @@ async def async_setup_entry(
         SesameBatterySensor(wrapper),
     ]
     
-    # Keypad specific sensors
-    if "TOUCH" in wrapper.model_name:
-        entities.extend([
-            SesameTouchCardSensor(wrapper),
-            SesameTouchFingerprintSensor(wrapper),
-            SesameTouchPasscodeSensor(wrapper),
-            SesameTouchPairedLocksSensor(wrapper),
-        ])
+    # Keypad specific sensors based on model capabilities
+    if is_keypad_model(wrapper.model_name):
+        supported_methods = get_supported_auth_methods(wrapper.model_name)
+        
+        if "card" in supported_methods:
+            entities.append(SesameTouchCardSensor(wrapper))
+        if "fingerprint" in supported_methods:
+            entities.append(SesameTouchFingerprintSensor(wrapper))
+            
+        entities.append(SesameTouchPasscodeSensor(wrapper))
+        
+        if "face" in supported_methods:
+            entities.append(SesameTouchFaceSensor(wrapper))
+        if "palm" in supported_methods:
+            entities.append(SesameTouchPalmSensor(wrapper))
+            
+        entities.append(SesameTouchPairedLocksSensor(wrapper))
     else:
+
+
+
         # Lock specific diagnostic sensors
         entities.extend([
             SesameLockLockedPositionSensor(wrapper),
@@ -209,7 +224,50 @@ class SesameTouchPasscodeSensor(SesameBaseSensor):
         return {"passcodes": self._passcodes_list}
 
 
+class SesameTouchFaceSensor(SesameBaseSensor):
+    """Faces count sensor for Sesame Keypad."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the face sensor."""
+        super().__init__(wrapper, "Registered Faces", "registered_faces")
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_icon = "mdi:face-recognition"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the number of faces registered."""
+        try:
+            if hasattr(self.wrapper, "logical_faces"):
+                return len(self.wrapper.logical_faces)
+            return getattr(self.device, "faces_count", None)
+        except Exception:
+            return None
+
+
+class SesameTouchPalmSensor(SesameBaseSensor):
+    """Palms count sensor for Sesame Keypad."""
+
+    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
+        """Initialize the palm sensor."""
+        super().__init__(wrapper, "Registered Palms", "registered_palms")
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_icon = "mdi:hand-wave"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the number of palms registered."""
+        try:
+            if hasattr(self.wrapper, "logical_palms"):
+                return len(self.wrapper.logical_palms)
+            return getattr(self.device, "palms_count", None)
+        except Exception:
+            return None
+
+
 class SesameLockLockedPositionSensor(SesameBaseSensor):
+
     """Sensor to show the calibrated locked position angle."""
 
     def __init__(self, wrapper: SesameDeviceWrapper) -> None:

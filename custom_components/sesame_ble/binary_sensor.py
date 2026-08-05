@@ -12,7 +12,8 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .__init__ import SesameDeviceWrapper
+from . import SesameDeviceWrapper, is_keypad_model
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,9 @@ async def async_setup_entry(
     wrapper: SesameDeviceWrapper = hass.data[DOMAIN][entry.entry_id]
 
     # Door sensor is only for locks (paired with OpenSensor)
-    if "TOUCH" not in wrapper.model_name:
+    if not is_keypad_model(wrapper.model_name):
         async_add_entities([SesameDoorBinarySensor(wrapper)])
+
 
 
 class SesameDoorBinarySensor(BinarySensorEntity):

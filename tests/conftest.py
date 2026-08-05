@@ -140,6 +140,9 @@ class MockNumberEntity(MockEntity):
 class MockSelectEntity(MockEntity):
     pass
 
+class MockBinarySensorEntity(MockEntity):
+    pass
+
 lock = mock_module("homeassistant.components.lock", {
     "LockEntity": MockLockEntity,
 })
@@ -147,6 +150,10 @@ sensor = mock_module("homeassistant.components.sensor", {
     "SensorEntity": MockSensorEntity,
     "SensorDeviceClass": MagicMock(),
     "SensorStateClass": MagicMock(),
+})
+binary_sensor = mock_module("homeassistant.components.binary_sensor", {
+    "BinarySensorEntity": MockBinarySensorEntity,
+    "BinarySensorDeviceClass": MagicMock(),
 })
 button = mock_module("homeassistant.components.button", {
     "ButtonEntity": MockButtonEntity,
@@ -157,6 +164,7 @@ number = mock_module("homeassistant.components.number", {
 select = mock_module("homeassistant.components.select", {
     "SelectEntity": MockSelectEntity,
 })
+
 bluetooth_mock = mock_module("homeassistant.components.bluetooth", {
     "async_discovered_service_info": MagicMock(),
     "async_ble_device_from_address": MagicMock(),
@@ -179,6 +187,7 @@ http = mock_module("homeassistant.components.http", {
 components = mock_module("homeassistant.components", {
     "lock": lock,
     "sensor": sensor,
+    "binary_sensor": binary_sensor,
     "button": button,
     "number": number,
     "select": select,
@@ -186,6 +195,7 @@ components = mock_module("homeassistant.components", {
     "file_upload": file_upload,
     "http": http,
 })
+
 
 homeassistant = mock_module("homeassistant", {
     "config_entries": config_entries,

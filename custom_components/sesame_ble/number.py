@@ -12,7 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .__init__ import SesameDeviceWrapper
+from . import SesameDeviceWrapper, is_keypad_model
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,10 @@ async def async_setup_entry(
     wrapper: SesameDeviceWrapper = hass.data[DOMAIN][entry.entry_id]
 
     # Keypads and Touch devices do not have lock auto-lock settings to configure
-    if "TOUCH" in wrapper.model_name:
+    if is_keypad_model(wrapper.model_name):
         logger.debug("Skipping number setup for Sesame Touch device %s", entry.unique_id)
         return
+
 
     async_add_entities([
         SesameAutoLockNumber(wrapper),
