@@ -566,8 +566,10 @@
           <div class="status-dot"></div>
           <span id="status-text">Disconnected</span>
         </div>
+        <button id="btn-show-qr" class="btn" style="width: auto; padding: 8px 16px; background: var(--secondary-background-color); border: 1px solid var(--panel-border);" onclick="showQRCodeModal()">📱 App QR Code</button>
       </div>
     </header>
+
 
     <main class="panel">
       <!-- Tabs Header -->
@@ -2225,6 +2227,70 @@
       const mm = pad(date.getMinutes());
       return `${yyyy}-${MM}-${dd} ${hh}:${mm}`;
     }
+
+    function showQRCodeModal() {
+
+      let qrUrl = "", qrImgUrl = "", name = "";
+
+      const currentKeypad = activeKeypads.find(k => k.entry_id === currentKeypadEntryId);
+      if (currentKeypad) {
+        name = currentKeypad.name;
+        qrUrl = currentKeypad.qr_url || "";
+        qrImgUrl = currentKeypad.qr_image_url || "";
+      } else if (allConfiguredLocks.length > 0) {
+        const lock = allConfiguredLocks[0];
+        name = lock.name;
+        qrUrl = lock.qr_url || "";
+        qrImgUrl = lock.qr_image_url || "";
+      }
+
+      if (!qrUrl) {
+        alert("No QR Code setup URL available for the selected device.");
+        return;
+      }
+
+      document.getElementById("qr-modal-title").innerText = `${name} - App Setup QR`;
+      document.getElementById("qr-modal-url").value = qrUrl;
+      document.getElementById("qr-modal-img").src = qrImgUrl;
+
+      document.getElementById("qr-code-modal").style.display = "flex";
+    }
+
+    function closeQRCodeModal() {
+      document.getElementById("qr-code-modal").style.display = "none";
+    }
+
+    function copyQRUrl() {
+      const urlEl = document.getElementById("qr-modal-url");
+      urlEl.select();
+      navigator.clipboard.writeText(urlEl.value);
+      alert("Setup URL copied to clipboard!");
+    }
   </script>
+
+  <!-- QR Code Setup Modal -->
+  <div id="qr-code-modal" class="modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); align-items: center; justify-content: center; z-index: 1000;">
+    <div class="panel" style="max-width: 460px; width: 90%; text-align: center; position: relative; padding: 24px; border-radius: 16px;">
+      <h3 id="qr-modal-title" style="margin-bottom: 12px; font-weight: 600; font-size: 1.2rem;">Sesame App Setup QR</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px;">Scan this QR code with the official Candy House Sesame app to import this device onto your phone.</p>
+
+      <div style="background: white; padding: 16px; border-radius: 12px; display: inline-block; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+        <img id="qr-modal-img" src="" alt="App Setup QR Code" style="width: 220px; height: 220px; display: block;" />
+      </div>
+
+      <div class="form-group" style="text-align: left; margin-bottom: 20px;">
+        <label style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted);">ssm:// Setup URL</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="qr-modal-url" class="input-style" readonly style="font-size: 0.8rem; font-family: monospace;" />
+          <button class="btn" style="width: auto; padding: 0 16px;" onclick="copyQRUrl()">Copy</button>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end;">
+        <button class="btn btn-secondary" style="width: auto; padding: 8px 24px; background: var(--secondary-background-color); border: 1px solid var(--panel-border);" onclick="closeQRCodeModal()">Close</button>
+      </div>
+    </div>
+  </div>
 </body>
+
 </html>

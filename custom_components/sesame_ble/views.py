@@ -39,11 +39,16 @@ class SesamePasscodesView(HomeAssistantView):
                 device_uuid = ""
                 if hasattr(other_wrapper, "adv_data") and other_wrapper.adv_data:
                     device_uuid = str(other_wrapper.adv_data.device_uuid)
+                qr_info = other_wrapper.get_qr_code_data() if hasattr(other_wrapper, "get_qr_code_data") else None
                 all_locks.append({
                     "entry_id": entry_id,
                     "name": other_wrapper.entry.title,
                     "uuid": device_uuid,
+                    "qr_url": qr_info["qr_url"] if qr_info else None,
+                    "qr_image_url": qr_info["qr_image_url"] if qr_info else None,
+                    "secret_key": qr_info["secret_key"] if qr_info else None,
                 })
+
 
         keypads_list = []
         for entry_id, wrapper in self.hass.data[DOMAIN].items():
@@ -116,12 +121,17 @@ class SesamePasscodesView(HomeAssistantView):
                         "entry_id": configured_entry_id,
                     })
 
+            qr_info = wrapper.get_qr_code_data() if hasattr(wrapper, "get_qr_code_data") else None
             keypads_list.append({
                 "entry_id": entry_id,
                 "name": f"Sesame {wrapper.model_name} ({wrapper.ble_device.name or wrapper.ble_device.address})",
                 "mac_address": wrapper.ble_device.address,
                 "is_connected": wrapper.device.is_connected,
                 "is_logged_in": wrapper.device.is_logged_in,
+                "qr_url": qr_info["qr_url"] if qr_info else None,
+                "qr_image_url": qr_info["qr_image_url"] if qr_info else None,
+                "secret_key": qr_info["secret_key"] if qr_info else None,
+                "device_uuid": qr_info["device_uuid"] if qr_info else None,
                 "passcodes": passcodes_data,
                 "cards": cards_data,
                 "fingerprints": fingerprints_data,
@@ -130,6 +140,7 @@ class SesamePasscodesView(HomeAssistantView):
                 "scanned_fingerprint": wrapper.device.scanned_fingerprint if isinstance(getattr(wrapper.device, "scanned_fingerprint", None), dict) else None,
                 "scanned_passcode": wrapper.device.scanned_passcode if isinstance(getattr(wrapper.device, "scanned_passcode", None), dict) else None,
             })
+
 
         return self.json({"keypads": keypads_list, "all_locks": all_locks})
 

@@ -26,7 +26,16 @@ from .sesame_client import (
 
 logger = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.LOCK, Platform.SENSOR, Platform.BUTTON, Platform.NUMBER, Platform.SELECT, Platform.BINARY_SENSOR]
+PLATFORMS = [
+    Platform.LOCK,
+    Platform.SENSOR,
+    Platform.BUTTON,
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.BINARY_SENSOR,
+    Platform.IMAGE,
+]
+
 
 
 def parse_datetime(dt_str: str) -> datetime.datetime | None:
@@ -570,6 +579,78 @@ class SesameDeviceWrapper:
                     "fingerprints": self.logical_fingerprints
                 })
                 self._handle_status_update(self.device, self.device.mech_status)
+
+    async def async_unload(self) -> None:
+        """Unload entry resources."""
+        if self._scheduler_task:
+            self._scheduler_task.cancel()
+        if self.device:
+            await self.device.disconnect()
+
+    def get_qr_code_data(self) -> dict[str, str] | None:
+        """Generates QR code setup URL and metadata for importing into the official Sesame mobile app."""
+        try:
+            from urllib import parse
+            from uuid import UUID
+            from .const import CONF_SECRET_KEY, CONF_DEVICE_UUID
+            from .sesame_client import SesameQRCode, ProductModels
+
+            secret_hex = self.entry.data.get(CONF_SECRET_KEY, "")
+            if not secret_hex:
+                return None
+            secret_bytes = bytes.fromhex(secret_hex)
+
+            uuid_str = self.entry.data.get(CONF_DEVICE_UUID)
+            if not uuid_str and hasattr(self.device, "ad_data") and self.device.ad_data:
+                uuid_str = str(self.device.ad_data.device_uuid)
+            if not uuid_str and hasattr(self, "adv_data") and self.adv_data:
+                uuid_str = str(self.adv_data.device_uuid)
+            if not uuid_str:
+                uuid_str = "00000000-0000-0000-0000-000000000000"
+
+            device_uuid = UUID(uuid_str)
+            model_name = getattr(self, "model_name", "SESAME5")
+            model_id = ProductModels[model_name].value if model_name in ProductModels.__members__ else 5
+            device_name = self.entry.title or model_name
+
+            qr_obj = SesameQRCode(
+                device_name=device_name,
+                key_level=0,  # Owner level key
+                model_id=model_id,
+                device_uuid=device_uuid,
+                secret_key=secret_bytes,
+            )
+            qr_url = qr_obj.to_url()
+            image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={parse.quote(qr_url)}"
+
+            qr_data_uri = None
+            try:
+                import io
+                import base64
+                import qrcode
+                qr = qrcode.QRCode(version=1, box_size=8, border=2)
+                qr.add_data(qr_url)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                b64_png = base64.b64encode(buf.getvalue()).decode("ascii")
+                qr_data_uri = f"data:image/png;base64,{b64_png}"
+            except Exception as e:
+                logger.debug("Local QR code PNG generation fallback: %s", e)
+
+            return {
+                "qr_url": qr_url,
+                "qr_image_url": qr_data_uri or image_url,
+                "qr_data_uri": qr_data_uri,
+                "secret_key": secret_hex,
+                "device_uuid": str(device_uuid),
+                "model_name": model_name,
+            }
+
+        except Exception as e:
+            logger.warning("Failed to generate QR code data for %s: %s", self.entry.title, e)
+            return None
 
     async def async_disconnect(self) -> None:
         """Disconnect from the device."""

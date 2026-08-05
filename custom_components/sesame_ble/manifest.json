@@ -7,8 +7,10 @@
   "requirements": [
     "bleak-retry-connector>=3.0.0",
     "pyzbar>=0.1.9",
-    "Pillow>=10.0.0"
+    "Pillow>=10.0.0",
+    "qrcode>=7.0.0"
   ],
+
   "dependencies": ["bluetooth", "frontend", "panel_custom"],
   "bluetooth": [
     {

@@ -92,6 +92,9 @@ async def test_lock_setup_and_entities(mock_bluetooth) -> None:
     async_add_sensors.assert_called_once()
     sensors = async_add_sensors.call_args[0][0]
     assert len(sensors) == 6
+
+
+
     
     battery_sensor = sensors[0]
     assert battery_sensor.name == "Battery"
@@ -141,13 +144,17 @@ async def test_keypad_setup_and_entities(mock_bluetooth) -> None:
     await sesame_ble.lock.async_setup_entry(hass, entry, async_add_locks)
     async_add_locks.assert_not_called()
 
-    # 4. Keypads should add battery + cards + fingerprints + passcodes + paired locks sensors
+    # 4. Keypads should add battery + cards + fingerprints + passcodes + paired locks + RSSI + Connection sensors
     async_add_sensors = MagicMock()
     await sesame_ble.sensor.async_setup_entry(hass, entry, async_add_sensors)
     
     async_add_sensors.assert_called_once()
     sensors = async_add_sensors.call_args[0][0]
     assert len(sensors) == 7
+
+
+
+
     
     battery_sensor = sensors[0]
     card_sensor = sensors[1]
@@ -222,13 +229,17 @@ async def test_touch_2_pro_setup_and_entities(mock_bluetooth) -> None:
     await sesame_ble.lock.async_setup_entry(hass, entry, async_add_locks)
     async_add_locks.assert_not_called()
 
-    # 4. Keypads should add battery + cards + fingerprints + passcodes + paired locks sensors
+    # 4. Keypads should add battery + cards + fingerprints + passcodes + paired locks + RSSI + Connection sensors
     async_add_sensors = MagicMock()
     await sesame_ble.sensor.async_setup_entry(hass, entry, async_add_sensors)
     
     async_add_sensors.assert_called_once()
     sensors = async_add_sensors.call_args[0][0]
     assert len(sensors) == 7
+
+
+
+
     
     battery_sensor = sensors[0]
     card_sensor = sensors[1]

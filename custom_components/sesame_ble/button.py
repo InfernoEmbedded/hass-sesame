@@ -139,7 +139,8 @@ class SesameCalibrateMagnetButton(SesameBaseButton):
         """Initialize the button."""
         super().__init__(wrapper, "Calibrate Magnet", "calibrate_magnet")
         self._attr_icon = "mdi:compass"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_category = EntityCategory.CONFIG
+
 
     async def async_press(self) -> None:
         """Press the button."""

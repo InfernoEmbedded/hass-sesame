@@ -59,6 +59,8 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
+
+
 class SesameBaseSensor(SensorEntity):
     """Base class for Sesame BLE sensors."""
 
@@ -345,3 +347,5 @@ class SesameConnectionSensor(SesameBaseSensor):
             "is_connected": self.device.is_connected,
             "is_logged_in": self.device.is_logged_in,
         }
+
+

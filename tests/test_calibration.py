@@ -250,6 +250,8 @@ async def test_diagnostic_angle_sensors(mock_bluetooth) -> None:
     unlocked_sensor = next(s for s in entities if s.unique_id == "test_mac_sensors_unlocked_position")
     current_sensor = next(s for s in entities if s.unique_id == "test_mac_sensors_current_angle")
 
+
+
     # Populate angles on wrapper device
     wrapper.device.lock_position = 180
     wrapper.device.unlock_position = 90
@@ -396,6 +398,8 @@ async def test_keypad_paired_locks_sensor_and_services(mock_bluetooth) -> None:
     
     # 7 sensors for keypad: Battery + Card + Fingerprint + Passcode + Paired Locks + RSSI + Connection = 7 entities!
     assert len(entities) == 7
+
+
 
     paired_sensor = next(s for s in entities if s.unique_id == "test_mac_keypad_services_paired_locks")
     assert paired_sensor.name == "Paired Locks"
