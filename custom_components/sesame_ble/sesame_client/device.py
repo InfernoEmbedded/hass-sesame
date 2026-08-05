@@ -54,6 +54,8 @@ OP_PUBLISH = 0x08
 # Protocol Item Codes
 ITEM_REGISTRATION = 1
 ITEM_LOGIN = 2
+ITEM_VERSION_TAG = 5
+ITEM_ENABLE_DFU = 7
 ITEM_TIME = 8
 ITEM_INITIAL = 14
 ITEM_MAGNET = 17
@@ -478,10 +480,43 @@ class SesameDevice:
             if self._status_cb:
                 self._status_cb(self, self)
 
+            # Request firmware version in background on successful login
+            asyncio.create_task(self.request_firmware_version())
+
             return device_time
         except Exception:
             await self.disconnect()
             raise
+
+    @property
+    def firmware_version(self) -> str | None:
+        """Return the current firmware version string if fetched."""
+        return getattr(self, "_firmware_version", None)
+
+    async def request_firmware_version(self) -> str | None:
+        """Request the firmware version tag from the device over BLE."""
+        if not self.is_logged_in:
+            return self.firmware_version
+        try:
+            res = await self.send_command(ITEM_VERSION_TAG, b"", op_code=OP_READ)
+            if res:
+                ver_str = res.decode("utf-8", errors="ignore").strip("\x00").strip()
+                if ver_str:
+                    self._firmware_version = ver_str
+                    logger.info("Retrieved firmware version for %s: %s", self.address, ver_str)
+                    if self._status_cb:
+                        self._status_cb(self, self)
+                    return ver_str
+        except Exception as err:
+            logger.debug("Failed to fetch firmware version from %s: %s", self.address, err)
+        return self.firmware_version
+
+    async def enable_dfu(self) -> None:
+        """Put device into BLE DFU mode for over-the-air firmware updates."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        logger.info("Sending ENABLE_DFU command to device %s", self.address)
+        await self.send_command(ITEM_ENABLE_DFU, b"")
 
     async def sync_time(self) -> None:
         """Synchronizes the device's clock with the host time."""

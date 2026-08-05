@@ -34,6 +34,7 @@ PLATFORMS = [
     Platform.SELECT,
     Platform.BINARY_SENSOR,
     Platform.IMAGE,
+    Platform.UPDATE,
 ]
 
 
@@ -167,6 +168,35 @@ class SesameDeviceWrapper:
             self.update_listeners.remove(listener)
 
         return remove_listener
+
+    @property
+    def latest_firmware_version(self) -> str | None:
+        """Return the latest firmware version available for this device model."""
+        firmware_catalog = {
+            "SESAME 5": "v3.0",
+            "SESAME5": "v3.0",
+            "SESAME 5 PRO": "v3.0",
+            "SESAME5_PRO": "v3.0",
+            "SESAME 6": "v1.2",
+            "SESAME6": "v1.2",
+            "SESAME 6 PRO": "v1.2",
+            "SESAME6_PRO": "v1.2",
+            "Sesame Touch": "v2.1",
+            "SESAME_TOUCH": "v2.1",
+            "Sesame Touch 2": "v1.1",
+            "SESAME_TOUCH_2": "v1.1",
+            "Sesame Touch Pro": "v2.1",
+            "SESAME_TOUCH_PRO": "v2.1",
+            "Sesame Face": "v1.1",
+            "SESAME_FACE": "v1.1",
+            "Sesame Face Pro": "v1.1",
+            "SESAME_FACE_PRO": "v1.1",
+            "Sesame Face AI": "v1.0.4",
+            "SESAME_FACE_AI": "v1.0.4",
+            "Sesame Face Pro AI": "v1.0.4",
+            "SESAME_FACE_PRO_AI": "v1.0.4",
+        }
+        return firmware_catalog.get(self.model_name) or getattr(self.device, "firmware_version", None)
 
     async def async_connect(self) -> None:
         """Connect and authenticate with the device."""

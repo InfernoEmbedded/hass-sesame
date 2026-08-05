@@ -1245,4 +1245,66 @@ async def test_face_ai_keypad_setup_and_entities_filtering(mock_bluetooth) -> No
     assert "Current Position" not in sensor_names
 
 
+@pytest.mark.asyncio
+@patch("custom_components.sesame_ble.bluetooth")
+async def test_firmware_update_entity_and_dfu(mock_bluetooth):
+    """Test setup of SesameFirmwareUpdateEntity, version checking, and DFU mode trigger."""
+    import custom_components.sesame_ble as sesame_ble
+    from custom_components.sesame_ble.update import SesameFirmwareUpdateEntity
+    import custom_components.sesame_ble.update as sesame_update
+
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+
+    mock_ble_device = MagicMock()
+    mock_ble_device.address = "DE:34:B7:06:2E:99"
+    mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+
+    # Model ID 5 (SESAME5)
+    mfg_data = struct.pack("<HB16s", 5, 1, TEST_UUID.bytes)
+    mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry_update"
+    entry.unique_id = "test_mac_update"
+    entry.data = {
+        "mac_address": "DE:34:B7:06:2E:99",
+        CONF_SECRET_KEY: "8934fa89504ea1b70993b91ff4407aa9",
+        CONF_MODEL: "SESAME5",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    setup_ok = await sesame_ble.async_setup_entry(hass, entry)
+    assert setup_ok is True
+    wrapper = hass.data[DOMAIN][entry.entry_id]
+
+    # Setup update platform
+    async_add_updates = MagicMock()
+    await sesame_update.async_setup_entry(hass, entry, async_add_updates)
+    async_add_updates.assert_called_once()
+    
+    entities = async_add_updates.call_args[0][0]
+    assert len(entities) == 1
+    update_entity: SesameFirmwareUpdateEntity = entities[0]
+
+    assert update_entity.name == "Firmware Update"
+    assert update_entity.unique_id == "test_mac_update_firmware_update"
+    assert update_entity.latest_version == "v3.0"
+
+    # Simulate device returned installed firmware version v2.0
+    wrapper.device._firmware_version = "v2.0"
+    wrapper.device.is_logged_in = True
+
+    assert update_entity.installed_version == "v2.0"
+    assert update_entity.available is True
+    assert "v3.0" in update_entity.release_summary
+
+    # Test async_install triggers DFU command
+    wrapper.device.enable_dfu = AsyncMock()
+    await update_entity.async_install("v3.0", backup=False)
+    wrapper.device.enable_dfu.assert_called_once()
+
+
+
 

@@ -24,12 +24,16 @@ class MockConfigFlow:
         pass
 
 class MockEntity:
+    def __init__(self):
+        self.hass = None
     @property
     def name(self):
         return getattr(self, "_attr_name", None)
     @property
     def unique_id(self):
         return getattr(self, "_attr_unique_id", None)
+    def async_write_ha_state(self):
+        pass
 
 class MockLockEntity(MockEntity):
     pass
@@ -184,6 +188,19 @@ http = mock_module("homeassistant.components.http", {
     "HomeAssistantView": MockHomeAssistantView,
 })
 
+class MockUpdateEntity(MockEntity):
+    pass
+
+class MockUpdateEntityFeature:
+    INSTALL = 1
+    PROGRESS = 4
+
+update = mock_module("homeassistant.components.update", {
+    "UpdateEntity": MockUpdateEntity,
+    "UpdateDeviceClass": MagicMock(),
+    "UpdateEntityFeature": MockUpdateEntityFeature,
+})
+
 components = mock_module("homeassistant.components", {
     "lock": lock,
     "sensor": sensor,
@@ -191,6 +208,7 @@ components = mock_module("homeassistant.components", {
     "button": button,
     "number": number,
     "select": select,
+    "update": update,
     "bluetooth": bluetooth_mock,
     "file_upload": file_upload,
     "http": http,
