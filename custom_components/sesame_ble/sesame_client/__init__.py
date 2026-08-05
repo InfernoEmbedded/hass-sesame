@@ -2,6 +2,8 @@
 
 from .device import (
     COMPANY_ID,
+    COMPANY_IDS,
+    get_sesame_mfg_data,
     MODEL_SESAME5,
     MODEL_SESAME5_PRO,
     MODEL_SESAME_TOUCH,
@@ -14,10 +16,30 @@ from .device import (
     SesameLock,
     SesameKeypad,
     BaseKeypad,
+    ITEM_MECH_STATUS,
+    ITEM_PASSCODE_FIRST,
+    ITEM_PASSCODE_NOTIFY,
+    ITEM_PASSCODE_LAST,
+    ITEM_CARD_FIRST,
+    ITEM_CARD_NOTIFY,
+    ITEM_CARD_LAST,
+    ITEM_FINGER_FIRST,
+    ITEM_FINGER_NOTIFY,
+    ITEM_FINGER_LAST,
+    ITEM_FACE_FIRST,
+    ITEM_FACE_NOTIFY,
+    ITEM_FACE_LAST,
+    ITEM_PALM_FIRST,
+    ITEM_PALM_NOTIFY,
+    ITEM_PALM_LAST,
 )
+
 
 __all__ = [
     "COMPANY_ID",
+    "COMPANY_IDS",
+    "get_sesame_mfg_data",
+
     "MODEL_SESAME5",
     "MODEL_SESAME5_PRO",
     "MODEL_SESAME_TOUCH",
@@ -30,4 +52,21 @@ __all__ = [
     "SesameLock",
     "SesameKeypad",
     "BaseKeypad",
+    "ITEM_MECH_STATUS",
+    "ITEM_PASSCODE_FIRST",
+    "ITEM_PASSCODE_NOTIFY",
+    "ITEM_PASSCODE_LAST",
+    "ITEM_CARD_FIRST",
+    "ITEM_CARD_NOTIFY",
+    "ITEM_CARD_LAST",
+    "ITEM_FINGER_FIRST",
+    "ITEM_FINGER_NOTIFY",
+    "ITEM_FINGER_LAST",
+    "ITEM_FACE_FIRST",
+    "ITEM_FACE_NOTIFY",
+    "ITEM_FACE_LAST",
+    "ITEM_PALM_FIRST",
+    "ITEM_PALM_NOTIFY",
+    "ITEM_PALM_LAST",
 ]
+

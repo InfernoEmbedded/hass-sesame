@@ -11,6 +11,8 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.components import bluetooth
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.storage import Store
+
 
 from .const import CONF_MODEL, CONF_SECRET_KEY, CONF_DEVICE_UUID, DOMAIN
 from .sesame_client import (
@@ -44,6 +46,11 @@ def parse_datetime(dt_str: str) -> datetime.datetime | None:
     return None
 
 
+def is_keypad_model(model_name: str) -> bool:
+    """Returns True if the model is a keypad (Touch, Face, AI)."""
+    return any(k in model_name for k in ("TOUCH", "FACE", "AI"))
+
+
 class SesameDeviceWrapper:
     """Wrapper class to coordinate connection and updates for Sesame BLE devices."""
 
@@ -63,9 +70,9 @@ class SesameDeviceWrapper:
         self.adv_data = adv_data
         self.secret_key = secret_key
         self.model_name = model_name
-        self.device = None
+
         self.update_listeners = []
-        self.store = None
+        self.store = Store(hass, 1, f"sesame_ble_{entry.entry_id}")
         self.logical_passcodes = {}
         self.logical_cards = {}
         self.logical_fingerprints = {}
@@ -77,7 +84,7 @@ class SesameDeviceWrapper:
         self.recently_deleted_fingerprints = {}
 
         # Instantiates the correct device type
-        if "TOUCH" in model_name:
+        if is_keypad_model(model_name):
             self.device = SesameKeypad(
                 ble_device,
                 adv_data,
@@ -111,7 +118,7 @@ class SesameDeviceWrapper:
             listener()
 
         # Trigger immediate sync for keypads to make Home Assistant instantly aware of updates (e.g. card/fingerprint scans)
-        if "TOUCH" in self.model_name:
+        if is_keypad_model(self.model_name):
             if self._sync_lock.locked():
                 logger.info("[_handle_status_update] Sync already in progress for keypad %s, skipping immediate trigger", device.mac_address)
             else:
@@ -132,7 +139,7 @@ class SesameDeviceWrapper:
         try:
             await self.device.connect()
             await self.device.login()
-            if "TOUCH" in self.model_name:
+            if is_keypad_model(self.model_name):
                 await self._async_auto_pair_keypad()
         except Exception as e:
             logger.warning("Failed to connect to Sesame device %s: %s", self.ble_device.address, e)
@@ -148,7 +155,7 @@ class SesameDeviceWrapper:
             for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
                 if other_entry_id == "views_registered":
                     continue
-                if not hasattr(other_wrapper, "model_name") or "TOUCH" not in other_wrapper.model_name:
+                if not hasattr(other_wrapper, "model_name") or not is_keypad_model(other_wrapper.model_name):
                     locks.append(other_wrapper)
             
             if not locks:
@@ -197,7 +204,7 @@ class SesameDeviceWrapper:
         while True:
             if self.device.is_logged_in:
                 try:
-                    if "TOUCH" in self.model_name:
+                    if is_keypad_model(self.model_name):
                         await self._sync_and_apply_schedules()
                     else:
                         await self.fetch_and_flush_history()
@@ -219,7 +226,7 @@ class SesameDeviceWrapper:
         for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
             if other_entry_id == "views_registered":
                 continue
-            if hasattr(other_wrapper, "model_name") and "TOUCH" in other_wrapper.model_name:
+            if hasattr(other_wrapper, "model_name") and is_keypad_model(other_wrapper.model_name):
                 for lock_info in getattr(other_wrapper.device, "paired_locks", []):
                     if lock_info["uuid"].lower() == str(self.adv_data.device_uuid).lower():
                         keypad_wrapper = other_wrapper
@@ -352,7 +359,7 @@ class SesameDeviceWrapper:
                             for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
                                 if other_entry_id == "views_registered":
                                     continue
-                                if hasattr(other_wrapper, "model_name") and "TOUCH" in other_wrapper.model_name:
+                                if hasattr(other_wrapper, "model_name") and is_keypad_model(other_wrapper.model_name):
                                     for lock_info in getattr(other_wrapper.device, "paired_locks", []):
                                         if lock_info["uuid"].lower() == str(self.adv_data.device_uuid).lower():
                                             keypad_wrapper = other_wrapper
@@ -405,17 +412,32 @@ class SesameDeviceWrapper:
             await self.device.get_cards()
             logger.debug("[_sync_and_apply_schedules] Calling get_fingerprints()")
             await self.device.get_fingerprints()
-            
+            logger.debug("[_sync_and_apply_schedules] Calling get_faces()")
+            try:
+                await self.device.get_faces()
+            except NotImplementedError:
+                pass
+            logger.debug("[_sync_and_apply_schedules] Calling get_palms()")
+            try:
+                await self.device.get_palms()
+            except NotImplementedError:
+                pass
+
             physical_passcodes = self.device.passcodes
             physical_cards = self.device.cards
             physical_fingerprints = self.device.fingerprints
+            physical_faces = getattr(self.device, "faces", {})
+            physical_palms = getattr(self.device, "palms", {})
 
             logger.info(
-                "[_sync_and_apply_schedules] Fetched physical data. passcodes count=%d, cards count=%d, fingerprints count=%d",
+                "[_sync_and_apply_schedules] Fetched physical data. passcodes count=%d, cards count=%d, fingerprints count=%d, faces count=%d, palms count=%d",
                 len(physical_passcodes),
                 len(physical_cards),
-                len(physical_fingerprints)
+                len(physical_fingerprints),
+                len(physical_faces),
+                len(physical_palms)
             )
+
 
             import time
             now_ts = time.time()
@@ -431,13 +453,14 @@ class SesameDeviceWrapper:
             for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
                 if other_entry_id == "views_registered":
                     continue
-                if not hasattr(other_wrapper, "model_name") or "TOUCH" not in other_wrapper.model_name:
+                if not hasattr(other_wrapper, "model_name") or not is_keypad_model(other_wrapper.model_name):
                     lock_uuid_str = str(other_wrapper.adv_data.device_uuid).lower()
                     for lock_info in getattr(self.device, "paired_locks", []):
                         if lock_info["uuid"].lower() == lock_uuid_str:
                             paired_lock_wrapper = other_wrapper
                             break
                     if paired_lock_wrapper:
+
                         break
 
             if paired_lock_wrapper:
@@ -722,13 +745,49 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Register passcode services if this is a Sesame Touch/Touch Pro device
-    if "TOUCH" in model_name:
+    # Register passcode services if this is a keypad device
+    if is_keypad_model(model_name):
+
         async def handle_add_passcode(call: ServiceCall) -> None:
             """Service to add a passcode to a Sesame Touch."""
             device_id = call.data["device_id"]
             code = call.data["passcode"]
             name = call.data["name"]
+            start = call.data.get("start", "").strip()
+            end = call.data.get("end", "").strip()
+            days = call.data.get("days", [])
+            time_start = call.data.get("time_start", "").strip()
+            time_end = call.data.get("time_end", "").strip()
+            one_time = bool(call.data.get("one_time", False))
+            person_id = call.data.get("person_id")
+            if person_id == "":
+                person_id = None
+
+            # Validate datetimes
+            if start:
+                start_dt = parse_datetime(start)
+                if not start_dt:
+                    raise HomeAssistantError(f"Invalid start datetime format: '{start}'. Use YYYY-MM-DD HH:MM")
+            if end:
+                end_dt = parse_datetime(end)
+                if not end_dt:
+                    raise HomeAssistantError(f"Invalid end datetime format: '{end}'. Use YYYY-MM-DD HH:MM")
+
+            # Validate time_start and time_end
+            if time_start:
+                try:
+                    h, m = map(int, time_start.split(":"))
+                    if not (0 <= h <= 23 and 0 <= m <= 59):
+                        raise ValueError()
+                except ValueError:
+                    raise HomeAssistantError(f"Invalid daily start time format: '{time_start}'. Use HH:MM")
+            if time_end:
+                try:
+                    h, m = map(int, time_end.split(":"))
+                    if not (0 <= h <= 23 and 0 <= m <= 59):
+                        raise ValueError()
+                except ValueError:
+                    raise HomeAssistantError(f"Invalid daily end time format: '{time_end}'. Use HH:MM")
 
             # Resolve the config entry / wrapper from the device registry ID
             dev_reg = dr.async_get(hass)
@@ -759,25 +818,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await target_wrapper.async_connect()
 
             try:
-                await sesame_touch.add_passcode(code, name)
                 # Update logical database immediately
                 uid = bytes(int(c) for c in code).hex()
                 target_wrapper.logical_passcodes[uid] = {
                     "name": name,
                     "code": code,
-                    "start": "",
-                    "end": "",
+                    "start": start,
+                    "end": end,
+                    "days": [int(d) for d in days] if days else [],
+                    "time_start": time_start,
+                    "time_end": time_end,
+                    "one_time": one_time,
+                    "person_id": person_id,
                 }
                 await target_wrapper.store.async_save({
                     "passcodes": target_wrapper.logical_passcodes,
                     "cards": target_wrapper.logical_cards,
                     "fingerprints": target_wrapper.logical_fingerprints
                 })
-                # Force refresh passcodes list
-                await sesame_touch.get_passcodes()
+
+                # If it's already active physically (e.g. renamed), update name on physical device
+                if sesame_touch.is_logged_in and uid in sesame_touch.passcodes:
+                    try:
+                        await sesame_touch.update_passcode_name(uid, name)
+                    except Exception as e:
+                        logger.warning("Failed to rename passcode on physical device: %s", e)
+
+                # Force immediate sync & schedule evaluation
+                await target_wrapper._sync_and_apply_schedules()
                 target_wrapper._handle_status_update(sesame_touch, sesame_touch.mech_status)
             except Exception as ex:
                 raise HomeAssistantError(f"Failed to add passcode: {ex}") from ex
+
 
         async def handle_delete_passcode(call: ServiceCall) -> None:
             """Service to delete a passcode from a Sesame Touch."""

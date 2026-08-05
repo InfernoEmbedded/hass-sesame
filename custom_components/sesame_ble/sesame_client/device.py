@@ -29,7 +29,23 @@ SERVICE_UUID = "0000fd81-0000-1000-8000-00805f9b34fb"
 TX_CHAR_UUID = "16860002-a5ae-9856-b6d3-dbb4c676993e"
 RX_CHAR_UUID = "16860003-a5ae-9856-b6d3-dbb4c676993e"
 COMPANY_ID = 0x055A
+COMPANY_IDS = (0x055A, 0x05A7, 0x05A5, 0x053A)
+
+def get_sesame_mfg_data(mfg_dict: dict[int, bytes]) -> tuple[int, bytes] | None:
+    """Finds Sesame/CandyHouse manufacturer data across all known company IDs or matching payloads."""
+    if not mfg_dict:
+        return None
+    for cid in COMPANY_IDS:
+        if cid in mfg_dict:
+            return cid, mfg_dict[cid]
+    # Fallback: check any company ID with >= 19 bytes payload
+    for cid, data in mfg_dict.items():
+        if len(data) >= 19:
+            return cid, data
+    return None
+
 MTU_SIZE = 20
+
 
 # Operation Codes
 OP_RESPONSE = 0x07
@@ -89,6 +105,29 @@ ITEM_FINGER_LAST = 119
 ITEM_FINGER_FIRST = 120
 ITEM_FINGER_MODE_SET = 122
 
+# Biometric Keypad Face Item Codes
+ITEM_FACE_CHANGE = 154
+ITEM_FACE_DELETE = 155
+ITEM_FACE_GET = 156
+ITEM_FACE_NOTIFY = 157
+ITEM_FACE_LAST = 158
+ITEM_FACE_FIRST = 159
+ITEM_FACE_MODE_GET = 160
+ITEM_FACE_MODE_SET = 161
+ITEM_FACE_MODE_DELETE_NOTIFY = 192
+
+# Biometric Keypad Palm Item Codes
+ITEM_PALM_CHANGE = 162
+ITEM_PALM_DELETE = 163
+ITEM_PALM_GET = 164
+ITEM_PALM_NOTIFY = 165
+ITEM_PALM_LAST = 166
+ITEM_PALM_FIRST = 167
+ITEM_PALM_MODE_GET = 168
+ITEM_PALM_MODE_SET = 169
+ITEM_PALM_MODE_DELETE_NOTIFY = 193
+
+
 # Product Models
 class ProductModels(IntEnum):
     SESAME5 = 5
@@ -96,14 +135,41 @@ class ProductModels(IntEnum):
     SESAME_TOUCH_PRO = 9
     SESAME_TOUCH = 10
     SESAME5_USA = 16
+    SESAME_FACE_PRO = 18
+    SESAME_FACE = 19
+    SESAME6 = 20
+    SESAME6_PRO = 21
+    SESAME_FACE_PRO_AI = 22
+    SESAME_FACE_AI = 23
+    SESAME_TOUCH_2 = 25
     SESAME_TOUCH_2_PRO = 26
+    SESAME_FACE_2 = 27
+    SESAME_FACE_2_PRO = 28
+    SESAME_FACE_2_AI = 30
+    SESAME_FACE_2_PRO_AI = 31
+    SESAME6_PRO_SLIDING_DOOR = 32
 
 MODEL_SESAME5 = ProductModels.SESAME5
 MODEL_SESAME5_PRO = ProductModels.SESAME5_PRO
 MODEL_SESAME_TOUCH_PRO = ProductModels.SESAME_TOUCH_PRO
 MODEL_SESAME_TOUCH = ProductModels.SESAME_TOUCH
 MODEL_SESAME5_USA = ProductModels.SESAME5_USA
+MODEL_SESAME_FACE_PRO = ProductModels.SESAME_FACE_PRO
+MODEL_SESAME_FACE = ProductModels.SESAME_FACE
+MODEL_SESAME6 = ProductModels.SESAME6
+MODEL_SESAME6_PRO = ProductModels.SESAME6_PRO
+MODEL_SESAME_FACE_PRO_AI = ProductModels.SESAME_FACE_PRO_AI
+MODEL_SESAME_FACE_AI = ProductModels.SESAME_FACE_AI
+MODEL_SESAME_TOUCH_2 = ProductModels.SESAME_TOUCH_2
 MODEL_SESAME_TOUCH_2_PRO = ProductModels.SESAME_TOUCH_2_PRO
+MODEL_SESAME_FACE_2 = ProductModels.SESAME_FACE_2
+MODEL_SESAME_FACE_2_PRO = ProductModels.SESAME_FACE_2_PRO
+MODEL_SESAME_FACE_2_AI = ProductModels.SESAME_FACE_2_AI
+MODEL_SESAME_FACE_2_PRO_AI = ProductModels.SESAME_FACE_2_PRO_AI
+MODEL_SESAME6_PRO_SLIDING_DOOR = ProductModels.SESAME6_PRO_SLIDING_DOOR
+
+
+
 
 
 VOLTAGE_LEVELS = (
@@ -131,22 +197,27 @@ def calculate_battery_percentage(voltage: float) -> int:
             return int((upper_p - lower_p) * ratio + lower_p)
     return 0
 
-@dataclass(frozen=True)
+@dataclass
 class SesameAdData:
+
     """Decoded manufacturer data from a Sesame BLE advertisement."""
     model_id: int
     is_registered: bool
     device_uuid: UUID
 
+
     @classmethod
     def decode(cls, manufacturer_data: bytes) -> Self:
         """Parses raw advertisement bytes (<HB16s)."""
-        model_val, registered_val, uuid_bytes = struct.unpack("<HB16s", manufacturer_data)
+        if len(manufacturer_data) < 19:
+            raise ValueError(f"Manufacturer data too short: {len(manufacturer_data)} bytes")
+        model_val, registered_val, uuid_bytes = struct.unpack("<HB16s", manufacturer_data[:19])
         return cls(
             model_id=model_val,
-            is_registered=bool(registered_val),
+            is_registered=bool(registered_val & 1),
             device_uuid=UUID(bytes=uuid_bytes),
         )
+
 
 @dataclass(frozen=True)
 class SesameQRCode:
@@ -266,7 +337,10 @@ class SesameDevice:
         reconnect_attempts: int = 0,
     ) -> None:
         self._ble_device = ble_device
+        self.ad_data = ad_data
+        self.product_model = ad_data.model_id if ad_data else None
         self._secret = bytes.fromhex(secret_key) if secret_key else None
+
         self._reconnect_limit = reconnect_attempts
         self._status_cb = status_callback
 
@@ -282,6 +356,16 @@ class SesameDevice:
         self._pending_responses = {}
         self.is_logged_in = False
         self.mech_status = None
+
+        self.current_angle = None
+        self.target_angle = None
+        self.lock_position = None
+        self.unlock_position = None
+        self.is_locked = False
+        self.is_unlocked = False
+        self.is_moving = False
+
+
 
     @property
     def address(self) -> str:
@@ -888,6 +972,31 @@ class BaseKeypad:
         """Update the nickname of an existing fingerprint on the keypad."""
         raise NotImplementedError()
 
+    async def get_faces(self) -> dict[str, dict]:
+        """Fetch/sync faces from the keypad."""
+        raise NotImplementedError()
+
+    async def delete_face(self, face_id: str) -> None:
+        """Delete a face from the keypad."""
+        raise NotImplementedError()
+
+    async def update_face_name(self, face_id: str, name: str) -> None:
+        """Update the nickname of an existing face on the keypad."""
+        raise NotImplementedError()
+
+    async def get_palms(self) -> dict[str, dict]:
+        """Fetch/sync palms from the keypad."""
+        raise NotImplementedError()
+
+    async def delete_palm(self, palm_id: str) -> None:
+        """Delete a palm from the keypad."""
+        raise NotImplementedError()
+
+    async def update_palm_name(self, palm_id: str, name: str) -> None:
+        """Update the nickname of an existing palm on the keypad."""
+        raise NotImplementedError()
+
+
 
 class SesameKeypad(SesameDevice, BaseKeypad):
     """Subclass representing a Sesame Touch or Sesame Touch Pro keypad."""
@@ -905,13 +1014,23 @@ class SesameKeypad(SesameDevice, BaseKeypad):
         self._temp_passcodes = {}
         self._temp_cards = {}
         self._temp_fingerprints = {}
+        self._temp_faces = {}
+        self._temp_palms = {}
+        self.faces = {}
+        self.palms = {}
+        self.faces_count = 0
+        self.palms_count = 0
         self._sync_future = None
         self.scanned_fingerprint = None
         self.scanned_passcode = None
+        self.scanned_face = None
+        self.scanned_palm = None
         self.paired_locks = []
         self.card_registration_mode = False
         self.fingerprint_registration_mode = False
         self.passcode_registration_mode = False
+        self.face_registration_mode = False
+        self.palm_registration_mode = False
 
         self.battery_voltage = None
         self.battery_percentage = None
@@ -922,20 +1041,37 @@ class SesameKeypad(SesameDevice, BaseKeypad):
             # Struct varies by payload length:
             # - 7 bytes: battery (uint16_t), cards (int16_t), fingerprints (uint8_t), passwords (uint8_t), flags (uint8_t)
             # - 9 bytes: battery (uint16_t), cards (int16_t), fingerprints (uint8_t), passwords (uint8_t), faces (uint8_t), palms (uint8_t), flags (uint8_t)
+            faces = 0
+            palms = 0
             if len(payload) == 7:
                 raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhBBB", payload)
+                faces = 0
+                palms = 0
             elif len(payload) == 9:
-                raw_battery, cards, fingerprints, passwords, _faces, _palms, flags = struct.unpack("<HhBBBBB", payload)
+                model_id = getattr(getattr(self, "ad_data", None), "model_id", None) or getattr(self, "product_model", None)
+                if model_id in (18, 19, 22, 23, 27, 28, 30, 31):
+
+                    raw_battery, cards, fingerprints, passwords, faces, palms, flags = struct.unpack("<HhBBBBB", payload)
+                else:
+                    raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhhhB", payload)
+                    faces = 0
+                    palms = 0
             else:
-                # Fallback to legacy format if size is unexpected
                 raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhhhB", payload[:9])
+                faces = 0
+                palms = 0
+
+
             
             self.battery_voltage = raw_battery * 2 / 1000
             self.battery_percentage = calculate_battery_percentage(self.battery_voltage)
             self.cards_count = cards
             self.fingerprints_count = fingerprints
             self.passcodes_count = passwords
+            self.faces_count = faces
+            self.palms_count = palms
             self.is_battery_critical = bool(flags & 0x20)
+
             
             self.mech_status = self
             if not self._login_event.is_set():
@@ -1028,6 +1164,49 @@ class SesameKeypad(SesameDevice, BaseKeypad):
             logger.debug("Fingerprint sync database completed")
             if self._sync_future and not self._sync_future.done():
                 self._sync_future.set_result(True)
+
+        elif item_code == ITEM_FACE_FIRST:
+            self._temp_faces = {}
+            logger.debug("Face sync database started")
+
+        elif item_code == ITEM_FACE_NOTIFY:
+            parsed = self._parse_notify_payload(payload, is_passcode=False)
+            self._temp_faces.update(parsed)
+            logger.info("ITEM_FACE_NOTIFY received: parsed=%s", parsed)
+            for uid, info in parsed.items():
+                is_new = uid not in self.faces
+                if self._sync_future is None or (getattr(self, "face_registration_mode", False) and is_new):
+                    self.scanned_face = {"uid": uid, "type": info["type"]}
+                    if self._status_cb:
+                        self._status_cb(self, self)
+
+        elif item_code == ITEM_FACE_LAST:
+            self.faces = self._temp_faces
+            logger.debug("Face sync database completed")
+            if self._sync_future and not self._sync_future.done():
+                self._sync_future.set_result(True)
+
+        elif item_code == ITEM_PALM_FIRST:
+            self._temp_palms = {}
+            logger.debug("Palm sync database started")
+
+        elif item_code == ITEM_PALM_NOTIFY:
+            parsed = self._parse_notify_payload(payload, is_passcode=False)
+            self._temp_palms.update(parsed)
+            logger.info("ITEM_PALM_NOTIFY received: parsed=%s", parsed)
+            for uid, info in parsed.items():
+                is_new = uid not in self.palms
+                if self._sync_future is None or (getattr(self, "palm_registration_mode", False) and is_new):
+                    self.scanned_palm = {"uid": uid, "type": info["type"]}
+                    if self._status_cb:
+                        self._status_cb(self, self)
+
+        elif item_code == ITEM_PALM_LAST:
+            self.palms = self._temp_palms
+            logger.debug("Palm sync database completed")
+            if self._sync_future and not self._sync_future.done():
+                self._sync_future.set_result(True)
+
 
         elif item_code == ITEM_KEYPAD_LOCK_LIST:
             self._parse_paired_locks(payload)
@@ -1273,6 +1452,91 @@ class SesameKeypad(SesameDevice, BaseKeypad):
         mode = 0x01 if active else 0x00
         await self.send_command(ITEM_PASSCODE_MODE_SET, bytes([mode]), encrypt=True)
         self.passcode_registration_mode = active
+
+    async def get_faces(self) -> dict[str, dict]:
+        """Syncs the face database from the keypad and returns it."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+
+        if getattr(self, "faces_count", 0) == 0:
+            self.faces = {}
+            return self.faces
+
+        self._sync_future = asyncio.get_running_loop().create_future()
+        self._temp_faces = {}
+
+        try:
+            await self.send_command(ITEM_FACE_GET, b"", encrypt=True, wait_for_response=False)
+            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            return self.faces
+        finally:
+            self._sync_future = None
+
+    async def delete_face(self, face_id: str) -> None:
+        """Deletes a face from the keypad."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        await self.send_command(ITEM_FACE_DELETE, bytes.fromhex(face_id), encrypt=True)
+
+    async def update_face_name(self, face_id: str, name: str) -> None:
+        """Updates the nickname of an existing face."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        id_bytes = bytes.fromhex(face_id)
+        name_bytes = name.encode("utf-8")[:20]
+        payload = bytes([len(id_bytes)]) + id_bytes + name_bytes
+        await self.send_command(ITEM_FACE_CHANGE, payload, encrypt=True)
+
+    async def set_face_registration_mode(self, active: bool) -> None:
+        """Sets the keypad face mode: True for Add Mode, False for Verification Mode."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        mode = 0x01 if active else 0x00
+        await self.send_command(ITEM_FACE_MODE_SET, bytes([mode]), encrypt=True)
+        self.face_registration_mode = active
+
+    async def get_palms(self) -> dict[str, dict]:
+        """Syncs the palm database from the keypad and returns it."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+
+        if getattr(self, "palms_count", 0) == 0:
+            self.palms = {}
+            return self.palms
+
+        self._sync_future = asyncio.get_running_loop().create_future()
+        self._temp_palms = {}
+
+        try:
+            await self.send_command(ITEM_PALM_GET, b"", encrypt=True, wait_for_response=False)
+            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            return self.palms
+        finally:
+            self._sync_future = None
+
+    async def delete_palm(self, palm_id: str) -> None:
+        """Deletes a palm from the keypad."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        await self.send_command(ITEM_PALM_DELETE, bytes.fromhex(palm_id), encrypt=True)
+
+    async def update_palm_name(self, palm_id: str, name: str) -> None:
+        """Updates the nickname of an existing palm."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        id_bytes = bytes.fromhex(palm_id)
+        name_bytes = name.encode("utf-8")[:20]
+        payload = bytes([len(id_bytes)]) + id_bytes + name_bytes
+        await self.send_command(ITEM_PALM_CHANGE, payload, encrypt=True)
+
+    async def set_palm_registration_mode(self, active: bool) -> None:
+        """Sets the keypad palm mode: True for Add Mode, False for Verification Mode."""
+        if not self.is_logged_in:
+            raise Exception("Device is not logged in")
+        mode = 0x01 if active else 0x00
+        await self.send_command(ITEM_PALM_MODE_SET, bytes([mode]), encrypt=True)
+        self.palm_registration_mode = active
+
 
     async def add_card(self, card_id: str, name: str, card_type: int = 0x80) -> None:
         """Registers/Adds a card to the keypad database."""

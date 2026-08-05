@@ -508,6 +508,159 @@ async def test_bluetooth_register_confirm_success() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_flow_sesame6_manual_success() -> None:
+    """Tests manual setup flow for Sesame 6."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    user_input = {
+        "mac_address": "11:22:33:44:55:66",
+        CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+        CONF_MODEL: "SESAME6",
+    }
+
+    result = await flow.async_step_manual(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_set_unique_id.assert_called_once_with(format_mac("11:22:33:44:55:66"))
+    flow._abort_if_unique_id_configured.assert_called_once()
+    flow.async_create_entry.assert_called_once_with(
+        title="Sesame 6 (55:66)",
+        data={
+            "mac_address": "11:22:33:44:55:66",
+            CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+            CONF_MODEL: "SESAME6",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_flow_sesame6_pro_manual_success() -> None:
+    """Tests manual setup flow for Sesame 6 Pro."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    user_input = {
+        "mac_address": "AA:BB:CC:66:77:88",
+        CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+        CONF_MODEL: "SESAME6_PRO",
+    }
+
+    result = await flow.async_step_manual(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_set_unique_id.assert_called_once_with(format_mac("AA:BB:CC:66:77:88"))
+    flow._abort_if_unique_id_configured.assert_called_once()
+    flow.async_create_entry.assert_called_once_with(
+        title="Sesame 6 Pro (77:88)",
+        data={
+            "mac_address": "AA:BB:CC:66:77:88",
+            CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+            CONF_MODEL: "SESAME6_PRO",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_flow_sesame_touch_2_manual_success() -> None:
+    """Tests manual setup flow for Sesame Touch 2."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    user_input = {
+        "mac_address": "11:22:33:44:99:88",
+        CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+        CONF_MODEL: "SESAME_TOUCH_2",
+    }
+
+    result = await flow.async_step_manual(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_set_unique_id.assert_called_once_with(format_mac("11:22:33:44:99:88"))
+    flow._abort_if_unique_id_configured.assert_called_once()
+    flow.async_create_entry.assert_called_once_with(
+        title="Sesame Touch 2 (99:88)",
+        data={
+            "mac_address": "11:22:33:44:99:88",
+            CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+            CONF_MODEL: "SESAME_TOUCH_2",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_flow_sesame_face_manual_success() -> None:
+    """Tests manual setup flow for Sesame Face 1."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    user_input = {
+        "mac_address": "11:22:33:44:FA:CE",
+        CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+        CONF_MODEL: "SESAME_FACE",
+    }
+
+    result = await flow.async_step_manual(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_set_unique_id.assert_called_once_with(format_mac("11:22:33:44:FA:CE"))
+    flow._abort_if_unique_id_configured.assert_called_once()
+    flow.async_create_entry.assert_called_once_with(
+        title="Sesame Face 1 (FA:CE)",
+        data={
+            "mac_address": "11:22:33:44:FA:CE",
+            CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+            CONF_MODEL: "SESAME_FACE",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_flow_sesame_face_ai_manual_success() -> None:
+    """Tests manual setup flow for Sesame Face 1 AI."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    user_input = {
+        "mac_address": "11:22:33:44:A1:A1",
+        CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+        CONF_MODEL: "SESAME_FACE_AI",
+    }
+
+    result = await flow.async_step_manual(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_set_unique_id.assert_called_once_with(format_mac("11:22:33:44:A1:A1"))
+    flow._abort_if_unique_id_configured.assert_called_once()
+    flow.async_create_entry.assert_called_once_with(
+        title="Sesame Face 1 AI (A1:A1)",
+        data={
+            "mac_address": "11:22:33:44:A1:A1",
+            CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
+            CONF_MODEL: "SESAME_FACE_AI",
+        },
+    )
+
+
+
+
+
 def test_translations_completeness() -> None:
     """Verifies strings.json and all translation files exist, are valid JSON, and have matching keys."""
     import json

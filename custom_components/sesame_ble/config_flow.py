@@ -14,10 +14,39 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.device_registry import format_mac
 
 from .const import CONF_MODEL, CONF_QR_URL, CONF_SECRET_KEY, CONF_DEVICE_UUID, DOMAIN
-from .sesame_client import COMPANY_ID, ProductModels, SesameQRCode, SesameAdData
+from .sesame_client import COMPANY_ID, ProductModels, SesameQRCode, SesameAdData, get_sesame_mfg_data
 from .sesame_client.device import SesameDevice
 
 logger = logging.getLogger(__name__)
+
+
+def _log_ble_packet_discovery(hass, step_name: str) -> None:
+    """Logs all discovered BLE packets for diagnosis."""
+    logger.info("=== [BLE SCAN LOG] Discovered devices during step '%s' ===", step_name)
+    discovered = list(async_discovered_service_info(hass))
+    if not discovered:
+        logger.info("[BLE SCAN LOG] No BLE devices found in Home Assistant bluetooth cache.")
+        return
+
+    for service_info in discovered:
+        mfg_hex = {
+            f"0x{cid:04X} ({cid})": data.hex()
+            for cid, data in service_info.advertisement.manufacturer_data.items()
+        }
+        svc_data_hex = {
+            uuid: data.hex() for uuid, data in service_info.advertisement.service_data.items()
+        }
+        logger.info(
+            "[BLE SCAN LOG] MAC=%s | Name=%s | RSSI=%s | MFG_Data=%s | SVC_UUIDs=%s | SVC_Data=%s",
+            service_info.address,
+            service_info.name or "N/A",
+            service_info.rssi,
+            mfg_hex or "None",
+            service_info.advertisement.service_uuids or "None",
+            svc_data_hex or "None",
+        )
+    logger.info("=== [BLE SCAN LOG] End of scan for step '%s' ===", step_name)
+
 
 
 FRIENDLY_MODELS = {
@@ -26,8 +55,23 @@ FRIENDLY_MODELS = {
     "SESAME_TOUCH_PRO": "Touch Pro",
     "SESAME_TOUCH": "Touch",
     "SESAME5_USA": "5 USA",
+    "SESAME_FACE_PRO": "Face 1 Pro",
+    "SESAME_FACE": "Face 1",
+    "SESAME6": "6",
+    "SESAME6_PRO": "6 Pro",
+    "SESAME_FACE_PRO_AI": "Face 1 Pro AI",
+    "SESAME_FACE_AI": "Face 1 AI",
+    "SESAME_TOUCH_2": "Touch 2",
     "SESAME_TOUCH_2_PRO": "Touch 2 Pro",
+    "SESAME_FACE_2": "Face 2",
+    "SESAME_FACE_2_PRO": "Face 2 Pro",
+    "SESAME_FACE_2_AI": "Face 2 AI",
+    "SESAME_FACE_2_PRO_AI": "Face 2 Pro AI",
+    "SESAME6_PRO_SLIDING_DOOR": "6 Pro Sliding Door",
 }
+
+
+
 
 
 def parse_qr_code(qr_url: str) -> SesameQRCode:
@@ -80,6 +124,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle discovery and registration of unregistered Sesame BLE devices."""
         errors: dict[str, str] = {}
+        _log_ble_packet_discovery(self.hass, "discover_unregistered")
 
         if user_input is not None:
             self._mac_address = user_input.get("mac_address")
@@ -94,12 +139,16 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not discovered_info:
                 errors["base"] = "device_not_found"
             else:
-                mfg_data = discovered_info.advertisement.manufacturer_data.get(COMPANY_ID)
-                try:
-                    sesame_adv_data = SesameAdData.decode(mfg_data)
-                    model_name = ProductModels(sesame_adv_data.model_id).name
-                except Exception:
+                mfg_tuple = get_sesame_mfg_data(discovered_info.advertisement.manufacturer_data)
+                if not mfg_tuple:
                     errors["base"] = "invalid_mfg_data"
+                else:
+                    _, mfg_data = mfg_tuple
+                    try:
+                        sesame_adv_data = SesameAdData.decode(mfg_data)
+                        model_name = ProductModels(sesame_adv_data.model_id).name
+                    except Exception:
+                        errors["base"] = "invalid_mfg_data"
                     
                 if not errors:
                     # Perform registration handshake
@@ -134,18 +183,20 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Discover unregistered devices (is_registered == False)
         discovered_options = {}
         for service_info in async_discovered_service_info(self.hass):
-            if COMPANY_ID in service_info.advertisement.manufacturer_data:
-                mfg_data = service_info.advertisement.manufacturer_data[COMPANY_ID]
+            mfg_tuple = get_sesame_mfg_data(service_info.advertisement.manufacturer_data)
+            if mfg_tuple:
+                cid, mfg_data = mfg_tuple
                 try:
                     sesame_adv_data = SesameAdData.decode(mfg_data)
+                    logger.info("Found candidate Sesame BLE advertisement: MAC=%s, CID=0x%04X, model_id=%s, is_registered=%s, UUID=%s", service_info.address, cid, sesame_adv_data.model_id, sesame_adv_data.is_registered, sesame_adv_data.device_uuid)
                     if not sesame_adv_data.is_registered:
                         model_name = ProductModels(sesame_adv_data.model_id).name
                         friendly_model = FRIENDLY_MODELS.get(model_name, model_name)
                         discovered_options[service_info.address] = (
                             f"Sesame {friendly_model} ({service_info.name or service_info.address})"
                         )
-                except Exception:
-                    pass
+                except Exception as err:
+                    logger.warning("Failed to decode Sesame manufacturer data for %s: %s", service_info.address, err)
 
         if not discovered_options:
             errors["base"] = "no_unregistered_devices"
@@ -162,6 +213,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
 
     async def async_step_import_qr(
         self, user_input: dict[str, Any] | None = None
@@ -189,11 +241,13 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 
                 if not errors:
                     # Resolve BLE MAC address using the UUID from the QR code
+                    _log_ble_packet_discovery(self.hass, "import_qr")
                     target_uuid = self._qr_code_info.device_uuid
                     found_info = None
                     for service_info in async_discovered_service_info(self.hass):
-                        if COMPANY_ID in service_info.advertisement.manufacturer_data:
-                            mfg_data = service_info.advertisement.manufacturer_data[COMPANY_ID]
+                        mfg_tuple = get_sesame_mfg_data(service_info.advertisement.manufacturer_data)
+                        if mfg_tuple:
+                            _, mfg_data = mfg_tuple
                             try:
                                 sesame_adv_data = SesameAdData.decode(mfg_data)
                                 if sesame_adv_data.device_uuid == target_uuid:
@@ -285,6 +339,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Step to select the BLE MAC address if QR code UUID cannot be resolved automatically."""
         errors: dict[str, str] = {}
+        _log_ble_packet_discovery(self.hass, "select_address")
 
         if user_input is not None:
             self._mac_address = user_input["mac_address"]
@@ -306,8 +361,9 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         discovered_options = {}
         for service_info in async_discovered_service_info(self.hass):
-            if COMPANY_ID in service_info.advertisement.manufacturer_data:
-                mfg_data = service_info.advertisement.manufacturer_data[COMPANY_ID]
+            mfg_tuple = get_sesame_mfg_data(service_info.advertisement.manufacturer_data)
+            if mfg_tuple:
+                _, mfg_data = mfg_tuple
                 try:
                     sesame_adv_data = SesameAdData.decode(mfg_data)
                     model_name = ProductModels(sesame_adv_data.model_id).name
@@ -343,10 +399,24 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(formatted_mac)
         self._abort_if_unique_id_configured()
 
-        mfg_data = discovery_info.advertisement.manufacturer_data.get(COMPANY_ID)
-        if not mfg_data:
+        mfg_hex = {
+            f"0x{cid:04X} ({cid})": data.hex()
+            for cid, data in discovery_info.advertisement.manufacturer_data.items()
+        }
+        logger.info(
+            "=== [BLE AUTO-DISCOVERY MATCH LOG] MAC=%s | Name=%s | RSSI=%s | MFG_Data=%s | SVC_UUIDs=%s ===",
+            mac_address,
+            discovery_info.name or "N/A",
+            discovery_info.rssi,
+            mfg_hex or "None",
+            discovery_info.advertisement.service_uuids or "None",
+        )
+
+        mfg_tuple = get_sesame_mfg_data(discovery_info.advertisement.manufacturer_data)
+        if not mfg_tuple:
             return self.async_abort(reason="not_sesame")
 
+        _, mfg_data = mfg_tuple
         try:
             sesame_adv_data = SesameAdData.decode(mfg_data)
             model_name = ProductModels(sesame_adv_data.model_id).name
@@ -365,6 +435,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_bluetooth_register_confirm()
 
         return await self.async_step_bluetooth_confirm()
+
 
     async def async_step_bluetooth_confirm(
         self, user_input: dict[str, Any] | None = None

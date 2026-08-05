@@ -137,13 +137,20 @@ Depending on the hardware configured, the integration creates the following Home
 The integration exposes the following local services under the `sesame_ble` domain:
 
 ### 1. `sesame_ble.add_passcode`
-Adds a new passcode PIN to the Sesame Touch keypad.
+Adds a new passcode PIN to the Sesame Touch keypad (supporting optional timing constraints and one-time configuration).
 
 | Field | Type | Required | Description | Example |
 | :--- | :--- | :--- | :--- | :--- |
-| `device_id` | Device | Yes | The target Sesame Touch device entity. | *Select device* |
+| `device_id` | Device | Yes | The target Sesame Touch keypad device. | *Select device* |
 | `passcode` | String | Yes | Passcode PIN digits (4-16 numeric characters, 0-9). | `"123456"` |
-| `name` | String | Yes | Name / Nickname to identify the passcode. | `"John Doe"` |
+| `name` | String | Yes | Name / Nickname to identify the passcode (max 20 characters). | `"John Doe"` |
+| `start` | String | No | Date and time when the passcode becomes active (`YYYY-MM-DD HH:MM`). | `"2026-06-20 08:00"` |
+| `end` | String | No | Date and time when the passcode expires and is auto-deleted (`YYYY-MM-DD HH:MM`). | `"2026-06-20 18:00"` |
+| `days` | List | No | Days of week the passcode is active. Monday is `0`, Sunday is `6`. | `[0, 1, 2, 3, 4]` |
+| `time_start` | String | No | Daily start time constraint (`HH:MM`). | `"09:00"` |
+| `time_end` | String | No | Daily end time constraint (`HH:MM`). | `"17:00"` |
+| `one_time` | Boolean | No | If `true`, the passcode is deleted automatically after a single successful unlock. | `true` |
+| `person_id` | Entity | No | Home Assistant person entity ID to link unlock history. | `person.john_doe` |
 
 ---
 
@@ -188,6 +195,55 @@ Unpairs a physical lock from the Sesame Touch keypad.
 | :--- | :--- | :--- | :--- | :--- |
 | `device_id` | Device | Yes | The target Sesame Touch keypad device. | *Select device* |
 | `lock_uuid` | String | Yes | The raw UUID of the lock to unpair. | `"01234567-89ab-cdef-0123-456789abcdef"` |
+
+---
+
+## Programmatic Passcodes & Advanced Schedules
+
+Because scheduled, temporary, and one-time passcodes are supported directly in the `sesame_ble.add_passcode` service call, you can generate and manage them programmatically using standard Home Assistant automations and scripts.
+
+### 🤖 Example Automations & Scripts
+
+#### 1. Generating a One-Time Passcode (OTP / Disposable PIN)
+This automation generates a one-time passcode for a guest when a specific trigger occurs. The passcode is automatically cleaned up after its first successful unlock:
+
+```yaml
+alias: "Generate Guest OTP"
+trigger:
+  - platform: state
+    entity_id: input_button.generate_otp
+action:
+  - service: sesame_ble.add_passcode
+    data:
+      device_id: "your_keypad_device_id"
+      name: "Temporary Guest PIN"
+      passcode: "749204"
+      one_time: true
+```
+
+#### 2. Creating a Temporary/Scheduled Passcode (Weekly Windows)
+This automation configures a weekday-only passcode that automatically registers on the keypad during working hours (9 AM - 5 PM Monday-Friday) and is revoked/removed outside those hours:
+
+```yaml
+alias: "Create Cleaner Weekday Passcode"
+trigger:
+  - platform: homeassistant
+    event: start
+action:
+  - service: sesame_ble.add_passcode
+    data:
+      device_id: "your_keypad_device_id"
+      name: "Cleaner Schedule"
+      passcode: "553311"
+      days:
+        - 0 # Monday
+        - 1 # Tuesday
+        - 2 # Wednesday
+        - 3 # Thursday
+        - 4 # Friday
+      time_start: "09:00"
+      time_end: "17:00"
+```
 
 ---
 

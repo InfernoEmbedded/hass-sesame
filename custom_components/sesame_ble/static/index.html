@@ -575,9 +575,12 @@
         <button class="tab-btn active" onclick="switchTab('passcodes')">Passcodes</button>
         <button class="tab-btn" onclick="switchTab('cards')">NFC Cards</button>
         <button class="tab-btn" onclick="switchTab('fingerprints')">Fingerprints</button>
+        <button class="tab-btn" onclick="switchTab('faces')">Faces</button>
+        <button class="tab-btn" onclick="switchTab('palms')">Palms</button>
         <button class="tab-btn" onclick="switchTab('pairings')">Paired Locks</button>
         <button class="tab-btn" onclick="switchTab('history')">Access Logs</button>
       </div>
+
 
       <!-- Passcodes Content -->
       <div id="tab-passcodes" class="tab-content active">
@@ -705,6 +708,33 @@
           <div class="no-items">Select a keypad to load fingerprints.</div>
         </div>
       </div>
+
+      <!-- Faces Content -->
+      <div id="tab-faces" class="tab-content">
+        <div class="section-header-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h3 style="font-weight: 600; margin: 0;">Face Recognition List</h3>
+          <button id="add-face-btn" class="btn" onclick="startFaceRegistration()" style="display: none;">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Add Face
+          </button>
+        </div>
+        <div class="items-list" id="faces-list">
+          <div class="no-items">Select a keypad to load faces.</div>
+        </div>
+      </div>
+
+      <!-- Palms Content -->
+      <div id="tab-palms" class="tab-content">
+        <div class="section-header-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h3 style="font-weight: 600; margin: 0;">Palm Recognition List</h3>
+          <button id="add-palm-btn" class="btn" onclick="startPalmRegistration()" style="display: none;">
+            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Add Palm
+          </button>
+        </div>
+        <div class="items-list" id="palms-list">
+          <div class="no-items">Select a keypad to load palms.</div>
+        </div>
+      </div>
+
 
       <!-- Pairings Content -->
       <div id="tab-pairings" class="tab-content">

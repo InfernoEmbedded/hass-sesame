@@ -23,6 +23,70 @@ add_passcode:
       example: "Family Member"
       selector:
         text:
+    start:
+      name: Start Datetime
+      description: "The date and time when the passcode becomes active (e.g. YYYY-MM-DD HH:MM)."
+      required: false
+      example: "2026-06-20 08:00"
+      selector:
+        text:
+    end:
+      name: End Datetime
+      description: "The date and time when the passcode expires (e.g. YYYY-MM-DD HH:MM)."
+      required: false
+      example: "2026-06-20 18:00"
+      selector:
+        text:
+    days:
+      name: Days of Week
+      description: List of weekdays the passcode is active. Monday is 0, Sunday is 6.
+      required: false
+      selector:
+        select:
+          multiple: true
+          options:
+            - value: "0"
+              label: "Monday"
+            - value: "1"
+              label: "Tuesday"
+            - value: "2"
+              label: "Wednesday"
+            - value: "3"
+              label: "Thursday"
+            - value: "4"
+              label: "Friday"
+            - value: "5"
+              label: "Saturday"
+            - value: "6"
+              label: "Sunday"
+    time_start:
+      name: Daily Start Time
+      description: "Daily start time constraint (e.g. HH:MM)."
+      required: false
+      example: "09:00"
+      selector:
+        text:
+    time_end:
+      name: Daily End Time
+      description: "Daily end time constraint (e.g. HH:MM)."
+      required: false
+      example: "17:00"
+      selector:
+        text:
+    one_time:
+      name: One-Time Passcode (OTP)
+      description: If enabled, the passcode is deleted automatically after one successful unlock.
+      required: false
+      selector:
+        boolean:
+    person_id:
+      name: Person Entity
+      description: Optional person entity to associate with this passcode.
+      required: false
+      selector:
+        entity:
+          domain: person
+
 
 delete_passcode:
   name: Delete Passcode

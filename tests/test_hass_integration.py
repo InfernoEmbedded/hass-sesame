@@ -1010,3 +1010,104 @@ async def test_rssi_and_connection_sensors():
     # Test disconnected state
     wrapper.device.is_connected = False
     assert conn_sensor.native_value == "disconnected"
+
+
+@pytest.mark.asyncio
+async def test_add_passcode_service():
+    """Test handle_add_passcode service call with constraints and OTP parameters."""
+    import struct
+    from uuid import UUID
+    import sesame_ble
+    from homeassistant.core import ServiceCall
+
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+    # Mock services.async_register
+    hass.services.async_register = MagicMock()
+
+    entry_id = "test_keypad_entry"
+
+    entry = MagicMock()
+    entry.entry_id = entry_id
+    entry.unique_id = "test_mac_touch_2_pro"
+    entry.data = {
+        "mac_address": "DE:34:B7:06:2E:56",
+        CONF_SECRET_KEY: "8934fa89504ea1b70993b91ff4407aa9",
+        CONF_MODEL: "SESAME_TOUCH_2_PRO",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    with patch("sesame_ble.bluetooth") as mock_bluetooth:
+        mock_ble_device = MagicMock()
+        mock_ble_device.address = "DE:34:B7:06:2E:56"
+        mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+        
+        mfg_data = struct.pack("<HB16s", 26, 1, TEST_UUID.bytes)
+        mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+        
+        setup_ok = await sesame_ble.async_setup_entry(hass, entry)
+        assert setup_ok is True
+
+    wrapper = hass.data[DOMAIN][entry_id]
+
+    mock_device = MagicMock()
+    mock_device.is_connected = True
+    mock_device.is_logged_in = True
+    mock_device.passcodes = {}
+    mock_device.update_passcode_name = AsyncMock()
+    mock_device.mech_status = None
+    
+    wrapper.device = mock_device
+    wrapper.store = AsyncMock()
+    wrapper.logical_passcodes = {}
+    wrapper._sync_and_apply_schedules = AsyncMock()
+
+    # Extract the registered add_passcode service handler
+    service_register_calls = hass.services.async_register.call_args_list
+    add_passcode_handler = None
+    for call_args in service_register_calls:
+        if call_args[0][1] == "add_passcode":
+            add_passcode_handler = call_args[0][2]
+            break
+            
+    assert add_passcode_handler is not None
+
+    # Mock device registry
+    mock_dev_reg = MagicMock()
+    mock_device_entry = MagicMock()
+    mock_device_entry.config_entries = [entry_id]
+    mock_dev_reg.async_get.return_value = mock_device_entry
+    
+    with patch("homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg, create=True):
+        service_call = MagicMock()
+        service_call.data = {
+            "device_id": "some_device_id",
+            "passcode": "8888",
+            "name": "Service Temp User",
+            "start": "2026-06-20 08:00",
+            "end": "2026-06-20 18:00",
+            "days": ["0", "1", "2"],
+            "time_start": "09:00",
+            "time_end": "17:00",
+            "one_time": True,
+            "person_id": "person.guest",
+        }
+        await add_passcode_handler(service_call)
+
+        uid = bytes([8, 8, 8, 8]).hex()
+        assert uid in wrapper.logical_passcodes
+        logical_info = wrapper.logical_passcodes[uid]
+        assert logical_info["name"] == "Service Temp User"
+        assert logical_info["code"] == "8888"
+        assert logical_info["start"] == "2026-06-20 08:00"
+        assert logical_info["end"] == "2026-06-20 18:00"
+        assert logical_info["days"] == [0, 1, 2]
+        assert logical_info["time_start"] == "09:00"
+        assert logical_info["time_end"] == "17:00"
+        assert logical_info["one_time"] is True
+        assert logical_info["person_id"] == "person.guest"
+
+        # Verify sync was triggered
+        wrapper._sync_and_apply_schedules.assert_awaited_once()
+

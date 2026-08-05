@@ -12,8 +12,21 @@
   "dependencies": ["bluetooth", "frontend", "panel_custom"],
   "bluetooth": [
     {
+      "manufacturer_id": 1447
+    },
+    {
       "manufacturer_id": 1370
+    },
+    {
+      "manufacturer_id": 1445
+    },
+    {
+      "manufacturer_id": 1338
+    },
+    {
+      "service_uuid": "0000fd81-0000-1000-8000-00805f9b34fb"
     }
   ],
+
   "version": "1.0.0"
 }
