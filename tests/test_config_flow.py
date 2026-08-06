@@ -350,6 +350,25 @@ async def test_flow_qr_image_exception(mock_process) -> None:
 
 
 @pytest.mark.asyncio
+async def test_parse_real_qr_urls() -> None:
+    """Tests parsing actual QR code URLs from official app (including base64 + characters)."""
+    url1 = "ssm://UI?t=sk&sk=FZiwwtozCB80JR0plUMEBAGwVNJIAABXTjM3OUqpHUX/////////&l=0&n=Sesame%206%20Pro"
+    url2 = "ssm://UI?t=sk&sk=GkYWJ+LJDM1gAthzYmN0miqLl7UIAABBUDVFODgzAQC4I1pWBgF4&l=0&n=Sesame%20Touch%202%20Pro"
+
+    qr1 = SesameQRCode.from_url(url1)
+    assert qr1.device_name == "Sesame 6 Pro"
+    assert qr1.model_id == 21
+    assert str(qr1.device_uuid) == "574e3337-394a-a91d-45ff-ffffffffffff"
+    assert qr1.secret_key.hex() == "98b0c2da33081f34251d299543040401"
+
+    qr2 = SesameQRCode.from_url(url2)
+    assert qr2.device_name == "Sesame Touch 2 Pro"
+    assert qr2.model_id == 26
+    assert str(qr2.device_uuid) == "41503545-3838-3301-00b8-235a56060178"
+    assert qr2.secret_key.hex() == "461627e2c90ccd6002d8736263749a2a"
+
+
+@pytest.mark.asyncio
 async def test_flow_menu_user_step() -> None:
     """Tests that the initial user step presents a menu choice."""
     flow = SesameBLEConfigFlow()
@@ -359,7 +378,11 @@ async def test_flow_menu_user_step() -> None:
     assert result == "menu_displayed"
     flow.async_show_menu.assert_called_once_with(
         step_id="user",
-        menu_options=["discover_unregistered", "import_qr", "manual"]
+        menu_options={
+            "discover_unregistered": "Register New Device Nearby",
+            "import_qr": "Import via QR Code",
+            "manual": "Manual Setup",
+        },
     )
 
 

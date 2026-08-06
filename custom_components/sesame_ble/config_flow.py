@@ -84,13 +84,32 @@ def _decode_uploaded_qr(hass, uploaded_file_id) -> str | None:
     try:
         with process_uploaded_file(hass, uploaded_file_id) as file_path:
             from PIL import Image
-            from pyzbar.pyzbar import decode
             with Image.open(file_path) as img:
-                decoded_objects = decode(img)
-                for obj in decoded_objects:
-                    url = obj.data.decode("utf-8")
-                    if url.startswith("ssm://"):
-                        return url
+                rgb_img = img.convert("RGB")
+                
+                # 1. Try pyzbar decoder
+                try:
+                    from pyzbar.pyzbar import decode
+                    decoded_objects = decode(rgb_img)
+                    for obj in decoded_objects:
+                        url = obj.data.decode("utf-8")
+                        if url.startswith("ssm://"):
+                            return url
+                except Exception as pyzbar_err:
+                    logger.debug("pyzbar decode attempt failed: %s", pyzbar_err)
+                
+                # 2. Try OpenCV decoder as fallback
+                try:
+                    import cv2
+                    import numpy as np
+                    cv_img = cv2.cvtColor(np.array(rgb_img), cv2.COLOR_RGB2BGR)
+                    detector = cv2.QRCodeDetector()
+                    val, points, straight_qrcode = detector.detectAndDecode(cv_img)
+                    if val and val.startswith("ssm://"):
+                        return val
+                except Exception as cv_err:
+                    logger.debug("OpenCV decode attempt failed: %s", cv_err)
+
     except Exception as err:
         logger.exception("Error decoding QR image: %s", err)
     return None
@@ -116,7 +135,11 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial step by showing options menu."""
         return self.async_show_menu(
             step_id="user",
-            menu_options=["discover_unregistered", "import_qr", "manual"],
+            menu_options={
+                "discover_unregistered": "Register New Device Nearby",
+                "import_qr": "Import via QR Code",
+                "manual": "Manual Setup",
+            },
         )
 
     async def async_step_discover_unregistered(

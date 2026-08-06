@@ -233,11 +233,19 @@ class SesameQRCode:
     @classmethod
     def from_url(cls, url: str) -> Self:
         """Parses a ssm:// setup URL from the Candy House app."""
-        query = parse.parse_qs(parse.urlparse(url).query)
-        key_level = int(query.get("l", ["0"])[0])
-        device_name = query.get("n", [""])[0]
+        parsed = parse.urlparse(url.strip())
+        query_raw = parsed.query
+        params = dict(parse.parse_qsl(query_raw, keep_blank_values=True))
         
-        shared_key = base64.b64decode(query.get("sk", [""])[0])
+        sk_str = params.get("sk", "").replace(" ", "+")
+        missing_padding = len(sk_str) % 4
+        if missing_padding:
+            sk_str += "=" * (4 - missing_padding)
+            
+        key_level = int(params.get("l", "0"))
+        device_name = params.get("n", "")
+        
+        shared_key = base64.b64decode(sk_str)
         # Format: >B16s4s2s16s (Model ID, secret key, token placeholder, index placeholder, UUID bytes)
         model_id, secret_key, _, _, uuid_bytes = struct.unpack(">B16s4s2s16s", shared_key)
         
@@ -516,7 +524,7 @@ class SesameDevice:
         if not self.is_logged_in:
             raise Exception("Device is not logged in")
         logger.info("Sending ENABLE_DFU command to device %s", self.address)
-        await self.send_command(ITEM_ENABLE_DFU, b"")
+        await self.send_command(ITEM_ENABLE_DFU, b"\x01", op_code=0x03)
 
     async def sync_time(self) -> None:
         """Synchronizes the device's clock with the host time."""
