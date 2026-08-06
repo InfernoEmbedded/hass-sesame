@@ -3,8 +3,13 @@
     "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "Sesame BLEの設定",
-        "description": "Sesameスマートロックまたはキーパッドの資格情報を入力します。公式アプリから共有されたQRコードURL（ssm://）を貼り付けて詳細を自動入力するか、手動で設定できます。"
+        "title": "Sesame BLE の設定",
+        "description": "Sesame 鍵またはキーパッドの認証情報を入力します。公式アプリで共有された QR コード URL (ssm://) を貼り付けて詳細を自動入力するか、手動で設定できます。",
+        "menu_options": {
+          "discover_unregistered": "近くの新しいデバイスを登録",
+          "import_qr": "QRコードでインポート",
+          "manual": "手動設定"
+        }
       },
       "discover_unregistered": {
         "title": "Register New Device",

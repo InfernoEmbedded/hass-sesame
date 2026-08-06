@@ -4,7 +4,12 @@
     "step": {
       "user": {
         "title": "Configure Sesame BLE",
-        "description": "Choose how you want to configure your Sesame device."
+        "description": "Choose how you want to configure your Sesame device.",
+        "menu_options": {
+          "discover_unregistered": "Register New Device Nearby",
+          "import_qr": "Import via QR Code",
+          "manual": "Manual Setup"
+        }
       },
       "discover_unregistered": {
         "title": "Register New Device",

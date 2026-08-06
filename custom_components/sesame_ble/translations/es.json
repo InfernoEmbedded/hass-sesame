@@ -4,7 +4,12 @@
     "step": {
       "user": {
         "title": "Configurar Sesame BLE",
-        "description": "Introduce las credenciales de tu cerradura o teclado Sesame. Puedes pegar una URL de código QR compartida (ssm://) desde la aplicación oficial para rellenar los datos automáticamente, o configurarlo manualmente."
+        "description": "Ingrese las credenciales para su cerradura o teclado Sesame. Puede pegar una URL de código QR compartida (ssm://) desde la aplicación oficial para completar automáticamente los detalles o configurarlo manualmente.",
+        "menu_options": {
+          "discover_unregistered": "Registrar nuevo dispositivo cercano",
+          "import_qr": "Importar mediante código QR",
+          "manual": "Configuración manual"
+        }
       },
       "discover_unregistered": {
         "title": "Register New Device",

@@ -4,7 +4,12 @@
     "step": {
       "user": {
         "title": "設定 Sesame BLE",
-        "description": "輸入您的 Sesame 門鎖或鑰匙盒的憑據。您可以貼上官方 App 分享的 QR Code 網址（ssm://）以自動填入詳細資訊，或是手動進行設定。"
+        "description": "輸入您的 Sesame 門鎖或鑰匙盒的憑據。您可以貼上官方 App 分享的 QR Code 網址（ssm://）以自動填入詳細資訊，或是手動進行設定。",
+        "menu_options": {
+          "discover_unregistered": "註冊附近的新裝置",
+          "import_qr": "透過 QR Code 匯入",
+          "manual": "手動設定"
+        }
       },
       "discover_unregistered": {
         "title": "Register New Device",

@@ -4,7 +4,12 @@
     "step": {
       "user": {
         "title": "Configurer Sesame BLE",
-        "description": "Saisissez les informations d'identification de votre serrure ou clavier Sesame. Vous pouvez coller une URL de code QR partagée (ssm://) depuis l'application officielle pour remplir automatiquement les détails, ou configurer manuellement."
+        "description": "Entrez les identifiants de votre serrure ou clavier Sesame. Vous pouvez coller une URL de code QR partagée (ssm://) depuis l'application officielle pour pré-remplir les détails ou configurer manuellement.",
+        "menu_options": {
+          "discover_unregistered": "Enregistrer un nouveau appareil à proximité",
+          "import_qr": "Importer via le code QR",
+          "manual": "Configuration manuelle"
+        }
       },
       "discover_unregistered": {
         "title": "Register New Device",

@@ -4,7 +4,12 @@
     "step": {
       "user": {
         "title": "Sesame BLE konfigurieren",
-        "description": "Geben Sie die Zugangsdaten für Ihr Sesame-Schloss oder -Keypad ein. Sie können eine freigegebene QR-Code-URL (ssm://) aus der offiziellen App einfügen, um die Details automatisch auszufüllen, oder sie manuell konfigurieren."
+        "description": "Geben Sie die Anmeldedaten für Ihr Sesame-Schloss oder Ihre Tastatur ein. Sie können eine freigegebene QR-Code-URL (ssm://) aus der offiziellen App einfügen, um die Details automatisch einzufügen, oder die Einrichtung manuell durchführen.",
+        "menu_options": {
+          "discover_unregistered": "Neues Gerät in der Nähe registrieren",
+          "import_qr": "Per QR-Code importieren",
+          "manual": "Manuelle Einrichtung"
+        }
       },
       "discover_unregistered": {
         "title": "Register New Device",
