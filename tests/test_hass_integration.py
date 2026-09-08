@@ -1125,6 +1125,145 @@ async def test_add_passcode_service():
 
 
 @pytest.mark.asyncio
+async def test_passcode_service_entity_id_resolution():
+    """Test handle_add_passcode and delete_passcode using entity IDs (keypad sensor and paired lock)."""
+    import struct
+    from uuid import UUID
+    import sesame_ble
+    from homeassistant.core import ServiceCall
+
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+    hass.services.async_register = MagicMock()
+
+    keypad_entry_id = "test_keypad_entry_id"
+    lock_entry_id = "test_lock_entry_id"
+    lock_uuid = UUID("11111111-2222-3333-4444-555555555555")
+
+    # Set up keypad entry
+    keypad_entry = MagicMock()
+    keypad_entry.entry_id = keypad_entry_id
+    keypad_entry.unique_id = "keypad_mac"
+    keypad_entry.data = {
+        "mac_address": "DE:34:B7:06:2E:56",
+        CONF_SECRET_KEY: "8934fa89504ea1b70993b91ff4407aa9",
+        CONF_MODEL: "SESAME_TOUCH_2_PRO",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    with patch("sesame_ble.bluetooth") as mock_bluetooth:
+        mock_ble_device = MagicMock()
+        mock_ble_device.address = "DE:34:B7:06:2E:56"
+        mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+        mfg_data = struct.pack("<HB16s", 26, 1, TEST_UUID.bytes)
+        mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+        await sesame_ble.async_setup_entry(hass, keypad_entry)
+
+    keypad_wrapper = hass.data[DOMAIN][keypad_entry_id]
+    mock_keypad_dev = MagicMock()
+    mock_keypad_dev.is_connected = True
+    mock_keypad_dev.is_logged_in = True
+    mock_keypad_dev.passcodes = {}
+    mock_keypad_dev.paired_locks = [{"uuid": str(lock_uuid)}]
+    mock_keypad_dev.update_passcode_name = AsyncMock()
+    mock_keypad_dev.delete_passcode = AsyncMock()
+    mock_keypad_dev.get_passcodes = AsyncMock()
+    mock_keypad_dev._resolve_code = MagicMock(return_value=bytes([1, 2, 3, 4]))
+    mock_keypad_dev.mech_status = None
+
+    keypad_wrapper.device = mock_keypad_dev
+    keypad_wrapper.store = AsyncMock()
+    keypad_wrapper.logical_passcodes = {}
+    keypad_wrapper._sync_and_apply_schedules = AsyncMock()
+
+    # Set up lock entry in hass.data
+    lock_wrapper = MagicMock()
+    lock_wrapper.model_name = "SESAME6_PRO"
+    lock_wrapper.adv_data.device_uuid = lock_uuid
+    hass.data[DOMAIN][lock_entry_id] = lock_wrapper
+
+    # Extract handlers
+    add_handler = None
+    del_handler = None
+    for call_args in hass.services.async_register.call_args_list:
+        if call_args[0][1] == "add_passcode":
+            add_handler = call_args[0][2]
+        elif call_args[0][1] == "delete_passcode":
+            del_handler = call_args[0][2]
+
+    assert add_handler is not None
+    assert del_handler is not None
+
+    # Setup mock registries
+    mock_dev_reg = MagicMock()
+    keypad_device_entry = MagicMock()
+    keypad_device_entry.config_entries = [keypad_entry_id]
+    lock_device_entry = MagicMock()
+    lock_device_entry.config_entries = [lock_entry_id]
+
+    def dev_reg_get(dev_id):
+        if dev_id == "keypad_dev_id":
+            return keypad_device_entry
+        elif dev_id == "lock_dev_id":
+            return lock_device_entry
+        return None
+
+    mock_dev_reg.async_get.side_effect = dev_reg_get
+
+    mock_ent_reg = MagicMock()
+    keypad_sensor_entity = MagicMock()
+    keypad_sensor_entity.device_id = "keypad_dev_id"
+    lock_entity = MagicMock()
+    lock_entity.device_id = "lock_dev_id"
+
+    def ent_reg_get(ent_id):
+        if ent_id == "sensor.entry_currawang_keypad_registered_passcodes":
+            return keypad_sensor_entity
+        elif ent_id == "lock.entry_currawang_entry":
+            return lock_entity
+        return None
+
+    mock_ent_reg.async_get.side_effect = ent_reg_get
+
+    with patch("homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg, create=True), \
+         patch("homeassistant.helpers.entity_registry.async_get", return_value=mock_ent_reg, create=True):
+
+        # 1. Add passcode via Keypad Entity ID
+        call1 = MagicMock()
+        call1.data = {
+            "device_id": "sensor.entry_currawang_keypad_registered_passcodes",
+            "passcode": "1234",
+            "name": "Guest Keypad",
+        }
+        await add_handler(call1)
+        uid1 = bytes([1, 2, 3, 4]).hex()
+        assert uid1 in keypad_wrapper.logical_passcodes
+        assert keypad_wrapper.logical_passcodes[uid1]["name"] == "Guest Keypad"
+
+        # 2. Add passcode via Lock Entity ID (auto-resolves paired keypad)
+        call2 = MagicMock()
+        call2.data = {
+            "entity_id": "lock.entry_currawang_entry",
+            "passcode": "5678",
+            "name": "Guest Via Lock",
+        }
+        await add_handler(call2)
+        uid2 = bytes([5, 6, 7, 8]).hex()
+        assert uid2 in keypad_wrapper.logical_passcodes
+        assert keypad_wrapper.logical_passcodes[uid2]["name"] == "Guest Via Lock"
+
+        # 3. Delete passcode via Lock Entity ID
+        del_call = MagicMock()
+        del_call.data = {
+            "device_id": "lock.entry_currawang_entry",
+            "passcode_or_id": "1234",
+        }
+        await del_handler(del_call)
+        assert uid1 not in keypad_wrapper.logical_passcodes
+
+
+@pytest.mark.asyncio
 @patch("sesame_ble.bluetooth")
 async def test_face_1_keypad_setup_and_entities(mock_bluetooth) -> None:
     """Tests entry setup and Keypad Manager recognition for a Sesame Face 1 keypad."""

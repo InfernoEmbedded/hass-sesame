@@ -746,3 +746,154 @@ def test_translations_completeness() -> None:
         for abrt in config_data["abort"]:
             assert abrt in t_config.get("abort", {}), f"{filename} is missing abort key '{abrt}'!"
 
+
+@pytest.mark.asyncio
+async def test_bluetooth_confirm_show_form() -> None:
+    """Tests that async_step_bluetooth_confirm shows the form with all options."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_show_form = MagicMock(return_value="form_shown")
+
+    result = await flow.async_step_bluetooth_confirm(user_input=None)
+    assert result == "form_shown"
+    flow.async_show_form.assert_called_once()
+    call_args = flow.async_show_form.call_args[1]
+    assert call_args["step_id"] == "bluetooth_confirm"
+    schema = call_args["data_schema"].schema
+    assert CONF_SECRET_KEY in schema
+    assert "qr_code_image" in schema
+    assert CONF_QR_URL in schema
+
+
+@pytest.mark.asyncio
+async def test_bluetooth_confirm_success_hex_key() -> None:
+    """Tests entering a 32-character hex secret key in bluetooth confirm dialog."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow._mac_address = "AA:BB:CC:DD:EE:FF"
+    flow._sesame_adv_data = SesameAdData(model_id=21, is_registered=True, device_uuid=TEST_UUID)
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+
+    user_input = {CONF_SECRET_KEY: "5147a1db8b1d05554455be36ac8ab8d4"}
+    result = await flow.async_step_bluetooth_confirm(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_create_entry.assert_called_once_with(
+        title="Sesame 6 Pro (EE:FF)",
+        data={
+            "mac_address": "AA:BB:CC:DD:EE:FF",
+            CONF_SECRET_KEY: "5147a1db8b1d05554455be36ac8ab8d4",
+            CONF_MODEL: "SESAME6_PRO",
+            CONF_DEVICE_UUID: str(TEST_UUID),
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_bluetooth_confirm_invalid_hex_key() -> None:
+    """Tests validation error when an invalid hex string is entered."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow._mac_address = "AA:BB:CC:DD:EE:FF"
+    flow.async_show_form = MagicMock(return_value="form_shown")
+
+    # Too short
+    user_input = {CONF_SECRET_KEY: "1234abcd"}
+    result = await flow.async_step_bluetooth_confirm(user_input=user_input)
+    assert result == "form_shown"
+    assert flow.async_show_form.call_args[1]["errors"][CONF_SECRET_KEY] == "invalid_secret_key"
+
+    # Non-hex characters
+    user_input = {CONF_SECRET_KEY: "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"}
+    result = await flow.async_step_bluetooth_confirm(user_input=user_input)
+    assert result == "form_shown"
+    assert flow.async_show_form.call_args[1]["errors"][CONF_SECRET_KEY] == "invalid_secret_key"
+
+
+@pytest.mark.asyncio
+async def test_bluetooth_confirm_success_qr_url() -> None:
+    """Tests providing a QR code URL in the bluetooth confirm dialog."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow._mac_address = "AA:BB:CC:DD:EE:FF"
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+
+    qr_url = "ssm://UI?t=sk&sk=FVFHoduLHQVVRFW+NqyKuNSmW+8+AABXTjM3OUqpHUX/////////&l=0&n=Currawang%20Front%20Door"
+    user_input = {CONF_QR_URL: qr_url}
+    result = await flow.async_step_bluetooth_confirm(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_create_entry.assert_called_once_with(
+        title="Currawang Front Door",
+        data={
+            "mac_address": "AA:BB:CC:DD:EE:FF",
+            CONF_SECRET_KEY: "5147a1db8b1d05554455be36ac8ab8d4",
+            CONF_MODEL: "SESAME6_PRO",
+            CONF_DEVICE_UUID: "574e3337-394a-a91d-45ff-ffffffffffff",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_bluetooth_confirm_pasting_ssm_in_secret_key_field() -> None:
+    """Tests pasting an ssm:// URL directly into the secret_key field."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow._mac_address = "AA:BB:CC:DD:EE:FF"
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+
+    qr_url = "ssm://UI?t=sk&sk=FVFHoduLHQVVRFW+NqyKuNSmW+8+AABXTjM3OUqpHUX/////////&l=0&n=Currawang%20Front%20Door"
+    user_input = {CONF_SECRET_KEY: qr_url}
+    result = await flow.async_step_bluetooth_confirm(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_create_entry.assert_called_once_with(
+        title="Currawang Front Door",
+        data={
+            "mac_address": "AA:BB:CC:DD:EE:FF",
+            CONF_SECRET_KEY: "5147a1db8b1d05554455be36ac8ab8d4",
+            CONF_MODEL: "SESAME6_PRO",
+            CONF_DEVICE_UUID: "574e3337-394a-a91d-45ff-ffffffffffff",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_bluetooth_confirm_qr_image_upload() -> None:
+    """Tests uploading a QR code image in the bluetooth confirm dialog."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow._mac_address = "AA:BB:CC:DD:EE:FF"
+    flow.async_create_entry = MagicMock(return_value="entry_created")
+
+    qr_url = "ssm://UI?t=sk&sk=FVFHoduLHQVVRFW+NqyKuNSmW+8+AABXTjM3OUqpHUX/////////&l=0&n=Currawang%20Front%20Door"
+    flow.hass.async_add_executor_job = AsyncMock(return_value=qr_url)
+
+    user_input = {"qr_code_image": "mock_file_id"}
+    result = await flow.async_step_bluetooth_confirm(user_input=user_input)
+
+    assert result == "entry_created"
+    flow.async_create_entry.assert_called_once_with(
+        title="Currawang Front Door",
+        data={
+            "mac_address": "AA:BB:CC:DD:EE:FF",
+            CONF_SECRET_KEY: "5147a1db8b1d05554455be36ac8ab8d4",
+            CONF_MODEL: "SESAME6_PRO",
+            CONF_DEVICE_UUID: "574e3337-394a-a91d-45ff-ffffffffffff",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_bluetooth_confirm_empty_input() -> None:
+    """Tests error when submitting the form with no key or QR code."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow._mac_address = "AA:BB:CC:DD:EE:FF"
+    flow.async_show_form = MagicMock(return_value="form_shown")
+
+    result = await flow.async_step_bluetooth_confirm(user_input={})
+    assert result == "form_shown"
+    assert flow.async_show_form.call_args[1]["errors"][CONF_SECRET_KEY] == "invalid_secret_key"
+
+

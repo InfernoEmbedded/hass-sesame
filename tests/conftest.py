@@ -76,6 +76,10 @@ exceptions = mock_module("homeassistant.exceptions", {
 device_registry = mock_module("homeassistant.helpers.device_registry", {
     "format_mac": lambda x: x,
     "CONNECTION_BLUETOOTH": "bluetooth",
+    "async_get": MagicMock,
+})
+entity_registry = mock_module("homeassistant.helpers.entity_registry", {
+    "async_get": MagicMock,
 })
 entity = mock_module("homeassistant.helpers.entity", {
     "DeviceInfo": dict,
@@ -132,6 +136,7 @@ storage = mock_module("homeassistant.helpers.storage", {
 
 helpers = mock_module("homeassistant.helpers", {
     "device_registry": device_registry,
+    "entity_registry": entity_registry,
     "entity": entity,
     "entity_platform": entity_platform,
     "selector": selector,

@@ -10,7 +10,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.components import bluetooth
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.storage import Store
 
 
@@ -785,6 +785,115 @@ async def async_cleanup_orphaned_keypad_entities(hass: HomeAssistant, entry: Con
         logger.warning("Failed to clean up orphaned keypad entities: %s", e)
 
 
+def resolve_target_wrapper(hass: HomeAssistant, target_id: str) -> "SesameDeviceWrapper":
+    """Resolves a target identifier (entity_id, device_id, unique_id, UUID, MAC, entry_id) to a SesameDeviceWrapper."""
+    if not target_id:
+        raise HomeAssistantError("Missing device or entity ID")
+
+    target_id = str(target_id).strip()
+    dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
+
+    device_entry = None
+    target_wrapper = None
+
+    # 1. Check if target_id is an entity_id in the entity registry
+    ent_entry = ent_reg.async_get(target_id)
+    if ent_entry and ent_entry.device_id:
+        device_entry = dev_reg.async_get(ent_entry.device_id)
+
+    # 2. Check if target_id is directly a device_id in the device registry
+    if not device_entry:
+        device_entry = dev_reg.async_get(target_id)
+
+    # 3. If device_entry found, resolve its wrapper from config_entries
+    if device_entry:
+        for config_entry_id in device_entry.config_entries:
+            if config_entry_id in hass.data.get(DOMAIN, {}):
+                target_wrapper = hass.data[DOMAIN][config_entry_id]
+                break
+
+    # 4. If not found via device registry, check matching entry_id, unique_id, MAC, UUID, or title
+    if not target_wrapper:
+        for entry_id, w in hass.data.get(DOMAIN, {}).items():
+            if entry_id == "views_registered" or not hasattr(w, "model_name"):
+                continue
+            if entry_id == target_id:
+                target_wrapper = w
+                break
+            if hasattr(w, "entry") and (
+                getattr(w.entry, "unique_id", None) == target_id
+                or getattr(w.entry, "title", None) == target_id
+                or getattr(w.entry, "entry_id", None) == target_id
+            ):
+                target_wrapper = w
+                break
+            if hasattr(w, "adv_data") and (
+                str(getattr(w.adv_data, "device_uuid", "")).lower() == target_id.lower()
+                or str(getattr(w.device, "mac_address", "")).lower() == target_id.lower()
+            ):
+                target_wrapper = w
+                break
+
+    if not target_wrapper:
+        raise HomeAssistantError(f"Could not resolve Sesame device from '{target_id}'")
+
+    return target_wrapper
+
+
+def resolve_target_keypad(hass: HomeAssistant, target_id: str) -> "SesameDeviceWrapper":
+    """Resolves a target identifier to a keypad wrapper.
+
+    If the target is a lock entity/device, it automatically finds the keypad paired to that lock.
+    """
+    try:
+        wrapper = resolve_target_wrapper(hass, target_id)
+    except HomeAssistantError:
+        # Fallback: check if there is only 1 keypad configured in Home Assistant
+        keypads = [
+            w for k, w in hass.data.get(DOMAIN, {}).items()
+            if k != "views_registered" and hasattr(w, "model_name") and is_keypad_model(w.model_name)
+        ]
+        if len(keypads) == 1:
+            return keypads[0]
+        raise
+
+    if is_keypad_model(wrapper.model_name):
+        return wrapper
+
+    # The resolved device is a lock (e.g. SESAME5, SESAME6_PRO). Find the keypad paired with this lock.
+    lock_uuid = str(getattr(wrapper.adv_data, "device_uuid", "")).lower()
+    for entry_id, other_w in hass.data.get(DOMAIN, {}).items():
+        if entry_id == "views_registered" or not hasattr(other_w, "model_name"):
+            continue
+        if is_keypad_model(other_w.model_name):
+            for lock_info in getattr(other_w.device, "paired_locks", []):
+                if str(lock_info.get("uuid", "")).lower() == lock_uuid:
+                    return other_w
+
+    # If not explicitly paired yet, but there is only 1 keypad in HA, return it as the logical paired keypad
+    keypads = [
+        w for k, w in hass.data.get(DOMAIN, {}).items()
+        if k != "views_registered" and hasattr(w, "model_name") and is_keypad_model(w.model_name)
+    ]
+    if len(keypads) == 1:
+        return keypads[0]
+
+    raise HomeAssistantError(
+        f"Device '{target_id}' is a {wrapper.model_name} lock, but no paired keypad was found."
+    )
+
+
+def resolve_target_lock(hass: HomeAssistant, target_id: str) -> "SesameDeviceWrapper":
+    """Resolves a target identifier to a lock wrapper."""
+    wrapper = resolve_target_wrapper(hass, target_id)
+    if is_keypad_model(wrapper.model_name):
+        raise HomeAssistantError(
+            f"Device '{target_id}' is a keypad ({wrapper.model_name}), expected a lock device or entity."
+        )
+    return wrapper
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Candy House Sesame BLE from a config entry."""
 
@@ -973,7 +1082,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def handle_add_passcode(call: ServiceCall) -> None:
             """Service to add a passcode to a Sesame Touch."""
-            device_id = call.data["device_id"]
+            target_id = call.data.get("device_id") or call.data.get("entity_id")
             code = call.data["passcode"]
             name = call.data["name"]
             start = call.data.get("start", "").strip()
@@ -1012,23 +1121,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except ValueError:
                     raise HomeAssistantError(f"Invalid daily end time format: '{time_end}'. Use HH:MM")
 
-            # Resolve the config entry / wrapper from the device registry ID
-            dev_reg = dr.async_get(hass)
-            device_entry = dev_reg.async_get(device_id)
-            if not device_entry:
-                raise HomeAssistantError("Invalid device ID")
-
-            # Find matching config entry
-            target_entry_id = None
-            for config_entry_id in device_entry.config_entries:
-                if config_entry_id in hass.data[DOMAIN]:
-                    target_entry_id = config_entry_id
-                    break
-
-            if not target_entry_id:
-                raise HomeAssistantError("Device is not configured or active")
-
-            target_wrapper: SesameDeviceWrapper = hass.data[DOMAIN][target_entry_id]
+            target_wrapper: SesameDeviceWrapper = resolve_target_keypad(hass, target_id)
             sesame_touch: SesameKeypad = target_wrapper.device
 
             # Check for duplicate passcode name
@@ -1076,24 +1169,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def handle_delete_passcode(call: ServiceCall) -> None:
             """Service to delete a passcode from a Sesame Touch."""
-            device_id = call.data["device_id"]
+            target_id = call.data.get("device_id") or call.data.get("entity_id")
             code_or_id = call.data["passcode_or_id"]
 
-            dev_reg = dr.async_get(hass)
-            device_entry = dev_reg.async_get(device_id)
-            if not device_entry:
-                raise HomeAssistantError("Invalid device ID")
-
-            target_entry_id = None
-            for config_entry_id in device_entry.config_entries:
-                if config_entry_id in hass.data[DOMAIN]:
-                    target_entry_id = config_entry_id
-                    break
-
-            if not target_entry_id:
-                raise HomeAssistantError("Device is not configured or active")
-
-            target_wrapper: SesameDeviceWrapper = hass.data[DOMAIN][target_entry_id]
+            target_wrapper: SesameDeviceWrapper = resolve_target_keypad(hass, target_id)
             sesame_touch: SesameKeypad = target_wrapper.device
 
             if not sesame_touch.is_logged_in:
@@ -1128,25 +1207,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def handle_update_passcode(call: ServiceCall) -> None:
             """Service to rename a passcode on a Sesame Touch."""
-            device_id = call.data["device_id"]
+            target_id = call.data.get("device_id") or call.data.get("entity_id")
             code_or_id = call.data["passcode_or_id"]
             name = call.data["name"]
 
-            dev_reg = dr.async_get(hass)
-            device_entry = dev_reg.async_get(device_id)
-            if not device_entry:
-                raise HomeAssistantError("Invalid device ID")
-
-            target_entry_id = None
-            for config_entry_id in device_entry.config_entries:
-                if config_entry_id in hass.data[DOMAIN]:
-                    target_entry_id = config_entry_id
-                    break
-
-            if not target_entry_id:
-                raise HomeAssistantError("Device is not configured or active")
-
-            target_wrapper: SesameDeviceWrapper = hass.data[DOMAIN][target_entry_id]
+            target_wrapper: SesameDeviceWrapper = resolve_target_keypad(hass, target_id)
             sesame_touch: SesameKeypad = target_wrapper.device
 
             # Check for duplicate passcode name
@@ -1183,43 +1248,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def handle_pair_lock(call: ServiceCall) -> None:
             """Service to pair a Sesame Lock to a Sesame Touch keypad."""
-            device_id = call.data["device_id"]
-            lock_device_id = call.data["lock_device_id"]
+            keypad_id = call.data.get("device_id") or call.data.get("entity_id")
+            lock_id = call.data.get("lock_device_id") or call.data.get("lock_entity_id") or call.data.get("lock_id")
 
-            dev_reg = dr.async_get(hass)
-            
-            # Resolve keypad wrapper
-            device_entry = dev_reg.async_get(device_id)
-            if not device_entry:
-                raise HomeAssistantError("Invalid keypad device ID")
-
-            target_entry_id = None
-            for config_entry_id in device_entry.config_entries:
-                if config_entry_id in hass.data[DOMAIN]:
-                    target_entry_id = config_entry_id
-                    break
-
-            if not target_entry_id:
-                raise HomeAssistantError("Keypad is not configured or active")
-
-            target_wrapper: SesameDeviceWrapper = hass.data[DOMAIN][target_entry_id]
+            target_wrapper: SesameDeviceWrapper = resolve_target_keypad(hass, keypad_id)
             sesame_touch: SesameKeypad = target_wrapper.device
 
-            # Resolve lock wrapper
-            lock_device_entry = dev_reg.async_get(lock_device_id)
-            if not lock_device_entry:
-                raise HomeAssistantError("Invalid lock device ID")
-
-            lock_entry_id = None
-            for config_entry_id in lock_device_entry.config_entries:
-                if config_entry_id in hass.data[DOMAIN]:
-                    lock_entry_id = config_entry_id
-                    break
-
-            if not lock_entry_id:
-                raise HomeAssistantError("Lock is not configured or active")
-
-            lock_wrapper: SesameDeviceWrapper = hass.data[DOMAIN][lock_entry_id]
+            lock_wrapper: SesameDeviceWrapper = resolve_target_lock(hass, lock_id)
 
             if not sesame_touch.is_logged_in:
                 await target_wrapper.async_connect()
@@ -1237,24 +1272,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def handle_unpair_lock(call: ServiceCall) -> None:
             """Service to unpair a Sesame Lock from a Sesame Touch keypad."""
-            device_id = call.data["device_id"]
+            keypad_id = call.data.get("device_id") or call.data.get("entity_id")
             lock_uuid_str = call.data["lock_uuid"]
 
-            dev_reg = dr.async_get(hass)
-            device_entry = dev_reg.async_get(device_id)
-            if not device_entry:
-                raise HomeAssistantError("Invalid keypad device ID")
-
-            target_entry_id = None
-            for config_entry_id in device_entry.config_entries:
-                if config_entry_id in hass.data[DOMAIN]:
-                    target_entry_id = config_entry_id
-                    break
-
-            if not target_entry_id:
-                raise HomeAssistantError("Keypad is not configured or active")
-
-            target_wrapper: SesameDeviceWrapper = hass.data[DOMAIN][target_entry_id]
+            target_wrapper: SesameDeviceWrapper = resolve_target_keypad(hass, keypad_id)
             sesame_touch: SesameKeypad = target_wrapper.device
 
             if not sesame_touch.is_logged_in:

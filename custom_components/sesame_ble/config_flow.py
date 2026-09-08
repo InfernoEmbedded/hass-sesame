@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def _log_ble_packet_discovery(hass, step_name: str) -> None:
     """Logs all discovered BLE packets for diagnosis."""
     logger.info("=== [BLE SCAN LOG] Discovered devices during step '%s' ===", step_name)
-    discovered = list(async_discovered_service_info(hass))
+    discovered = list(async_discovered_service_info(hass, connectable=False))
     if not discovered:
         logger.info("[BLE SCAN LOG] No BLE devices found in Home Assistant bluetooth cache.")
         return
@@ -205,7 +205,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Discover unregistered devices (is_registered == False)
         discovered_options = {}
-        for service_info in async_discovered_service_info(self.hass):
+        for service_info in async_discovered_service_info(self.hass, connectable=False):
             mfg_tuple = get_sesame_mfg_data(service_info.advertisement.manufacturer_data)
             if mfg_tuple:
                 cid, mfg_data = mfg_tuple
@@ -267,7 +267,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _log_ble_packet_discovery(self.hass, "import_qr")
                     target_uuid = self._qr_code_info.device_uuid
                     found_info = None
-                    for service_info in async_discovered_service_info(self.hass):
+                    for service_info in async_discovered_service_info(self.hass, connectable=False):
                         mfg_tuple = get_sesame_mfg_data(service_info.advertisement.manufacturer_data)
                         if mfg_tuple:
                             _, mfg_data = mfg_tuple
@@ -383,7 +383,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         discovered_options = {}
-        for service_info in async_discovered_service_info(self.hass):
+        for service_info in async_discovered_service_info(self.hass, connectable=False):
             mfg_tuple = get_sesame_mfg_data(service_info.advertisement.manufacturer_data)
             if mfg_tuple:
                 _, mfg_data = mfg_tuple
@@ -463,44 +463,111 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_bluetooth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Confirm discovery and request secret key for already registered device."""
+        """Confirm discovery and request secret key (hex) or QR code for already registered device."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            secret_key = user_input[CONF_SECRET_KEY]
-            try:
-                bytes.fromhex(secret_key)
-                if len(secret_key) != 32:
-                    raise ValueError
-            except ValueError:
+            raw_secret_key = (user_input.get(CONF_SECRET_KEY) or "").strip()
+            qr_code_image = user_input.get("qr_code_image")
+            qr_url = (user_input.get(CONF_QR_URL) or "").strip()
+
+            # If user pasted an ssm:// URL into the secret_key field
+            if raw_secret_key.startswith("ssm://"):
+                qr_url = raw_secret_key
+                raw_secret_key = ""
+
+            qr_info = None
+            if qr_code_image:
+                decoded_url = await self.hass.async_add_executor_job(
+                    _decode_uploaded_qr, self.hass, qr_code_image
+                )
+                if decoded_url:
+                    qr_url = decoded_url
+                else:
+                    errors["base"] = "invalid_qr_code"
+
+            secret_key_hex = None
+            if not errors and qr_url:
+                try:
+                    qr_info = parse_qr_code(qr_url)
+                    secret_key_hex = qr_info.secret_key.hex()
+                except Exception:
+                    logger.exception("Failed to parse QR code URL in discovery confirm")
+                    errors["base"] = "invalid_qr_code"
+
+            if not errors and raw_secret_key and not secret_key_hex:
+                try:
+                    bytes.fromhex(raw_secret_key)
+                    if len(raw_secret_key) != 32:
+                        raise ValueError
+                    secret_key_hex = raw_secret_key.lower()
+                except ValueError:
+                    errors[CONF_SECRET_KEY] = "invalid_secret_key"
+
+            if not errors and not secret_key_hex:
                 errors[CONF_SECRET_KEY] = "invalid_secret_key"
 
-            if not errors:
-                model_name = ProductModels.SESAME5.name
-                for service_info in async_discovered_service_info(self.hass):
-                    if service_info.address == self._mac_address:
-                        mfg_data = service_info.advertisement.manufacturer_data.get(COMPANY_ID)
-                        if mfg_data:
-                            try:
-                                sesame_adv_data = SesameAdData.decode(mfg_data)
-                                model_name = ProductModels(sesame_adv_data.model_id).name
-                                break
-                            except Exception:
-                                pass
+            if not errors and secret_key_hex:
+                model_name = None
+                if self._sesame_adv_data:
+                    try:
+                        model_name = ProductModels(self._sesame_adv_data.model_id).name
+                    except Exception:
+                        pass
+
+                if not model_name and qr_info:
+                    try:
+                        model_name = ProductModels(qr_info.model_id).name
+                    except Exception:
+                        pass
+
+                if not model_name:
+                    for service_info in async_discovered_service_info(self.hass, connectable=False):
+                        if service_info.address == self._mac_address:
+                            mfg_tuple = get_sesame_mfg_data(service_info.advertisement.manufacturer_data)
+                            if mfg_tuple:
+                                _, mfg_data = mfg_tuple
+                                try:
+                                    sesame_adv_data = SesameAdData.decode(mfg_data)
+                                    model_name = ProductModels(sesame_adv_data.model_id).name
+                                    break
+                                except Exception:
+                                    pass
+
+                if not model_name:
+                    model_name = ProductModels.SESAME5.name
 
                 friendly_model = FRIENDLY_MODELS.get(model_name, model_name)
+                title = f"Sesame {friendly_model} ({self._mac_address[-5:]})"
+                if qr_info and qr_info.device_name:
+                    title = qr_info.device_name
+
+                data = {
+                    "mac_address": self._mac_address,
+                    CONF_SECRET_KEY: secret_key_hex,
+                    CONF_MODEL: model_name,
+                }
+                if self._sesame_adv_data:
+                    data[CONF_DEVICE_UUID] = str(self._sesame_adv_data.device_uuid)
+                elif qr_info and qr_info.device_uuid:
+                    data[CONF_DEVICE_UUID] = str(qr_info.device_uuid)
+
                 return self.async_create_entry(
-                    title=f"Sesame {friendly_model} ({self._mac_address[-5:]})",
-                    data={
-                        "mac_address": self._mac_address,
-                        CONF_SECRET_KEY: secret_key,
-                        CONF_MODEL: model_name,
-                    },
+                    title=title,
+                    data=data,
                 )
 
         return self.async_show_form(
             step_id="bluetooth_confirm",
-            data_schema=vol.Schema({vol.Required(CONF_SECRET_KEY): str}),
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_SECRET_KEY): str,
+                    vol.Optional("qr_code_image"): selector.FileSelector(
+                        selector.FileSelectorConfig(accept="image/*")
+                    ),
+                    vol.Optional(CONF_QR_URL): str,
+                }
+            ),
             errors=errors,
         )
 

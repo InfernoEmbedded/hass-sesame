@@ -44,9 +44,11 @@
       },
       "bluetooth_confirm": {
         "title": "検出の確認",
-        "description": "検出されたSesameデバイスをセットアップしますか？シークレットキーを入力してください。",
+        "description": "検出されたSesameデバイスをセットアップしますか？16進数（32文字）のシークレットキーを入力するか、QRコードを指定してください。",
         "data": {
-          "secret_key": "シークレットキー"
+          "secret_key": "シークレットキー（16進数: 32文字）",
+          "qr_code_image": "QRコード画像のアップロード",
+          "qr_url": "QRコード設定URL（ssm://）"
         }
       },
       "bluetooth_register_confirm": {

@@ -44,9 +44,11 @@
       },
       "bluetooth_confirm": {
         "title": "Erkennung bestätigen",
-        "description": "Möchten Sie das erkannte Sesame-Gerät einrichten? Bitte geben Sie den Geheimschlüssel ein.",
+        "description": "Möchten Sie das erkannte Sesame-Gerät einrichten? Bitte geben Sie den Geheimschlüssel im Hex-Format (32 Zeichen) ein oder geben Sie stattdessen den QR-Code an.",
         "data": {
-          "secret_key": "Geheimschlüssel"
+          "secret_key": "Geheimschlüssel (Hex: 32 Zeichen)",
+          "qr_code_image": "QR-Code-Bild hochladen",
+          "qr_url": "QR-Code-Setup-URL (ssm://)"
         }
       },
       "bluetooth_register_confirm": {

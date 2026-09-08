@@ -44,9 +44,11 @@
       },
       "bluetooth_confirm": {
         "title": "Confirmar descubrimiento",
-        "description": "¿Quieres configurar el dispositivo Sesame descubierto? Por favor, introduce su clave secreta.",
+        "description": "¿Quieres configurar el dispositivo Sesame descubierto? Por favor, introduce su clave secreta en formato hexadecimal (32 caracteres) o proporciona el código QR en su lugar.",
         "data": {
-          "secret_key": "Clave secreta"
+          "secret_key": "Clave secreta (Hex: 32 caracteres)",
+          "qr_code_image": "Subir imagen de código QR",
+          "qr_url": "URL de configuración del código QR (ssm://)"
         }
       },
       "bluetooth_register_confirm": {

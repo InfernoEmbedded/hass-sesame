@@ -44,9 +44,11 @@
       },
       "bluetooth_confirm": {
         "title": "確認探索",
-        "description": "您要設定探索到的 Sesame 裝置嗎？請輸入其金鑰。",
+        "description": "您要設定探索到的 Sesame 裝置嗎？請輸入十六進位格式的金鑰（32 個字元），或提供 QR Code。",
         "data": {
-          "secret_key": "金鑰"
+          "secret_key": "金鑰（十六進位: 32 個字元）",
+          "qr_code_image": "上傳 QR Code 圖片",
+          "qr_url": "QR Code 設定網址（ssm://）"
         }
       },
       "bluetooth_register_confirm": {

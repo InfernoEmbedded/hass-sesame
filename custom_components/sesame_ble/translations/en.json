@@ -44,9 +44,11 @@
       },
       "bluetooth_confirm": {
         "title": "Confirm Discovery",
-        "description": "Do you want to set up the discovered Sesame device? Please enter its Secret Key.",
+        "description": "Do you want to set up the discovered Sesame device? Please enter its Secret Key in hex (32 characters), or provide its QR code instead.",
         "data": {
-          "secret_key": "Secret Key"
+          "secret_key": "Secret Key (Hex: 32 characters)",
+          "qr_code_image": "QR Code Image Upload",
+          "qr_url": "QR Code Setup URL (ssm://)"
         }
       },
       "bluetooth_register_confirm": {

@@ -3,11 +3,18 @@ add_passcode:
   description: Adds a new passcode (PIN code) to the Sesame Touch keypad.
   fields:
     device_id:
-      name: Device
-      description: The Sesame Touch device to add the passcode to.
-      required: true
+      name: Keypad or Lock (Device or Entity)
+      description: The Sesame Touch keypad or paired lock (Device ID, or Entity ID such as lock.* or sensor.*_registered_passcodes).
+      required: false
+      example: "lock.entry_currawang_entry"
       selector:
-        device:
+        text:
+    entity_id:
+      name: Target Entity
+      description: Optional entity ID of the keypad or paired lock.
+      required: false
+      selector:
+        entity:
           integration: sesame_ble
     passcode:
       name: Passcode PIN
@@ -93,11 +100,18 @@ delete_passcode:
   description: Deletes an existing passcode (PIN code) from the Sesame Touch keypad.
   fields:
     device_id:
-      name: Device
-      description: The Sesame Touch device to delete the passcode from.
-      required: true
+      name: Keypad or Lock (Device or Entity)
+      description: The Sesame Touch keypad or paired lock (Device ID, or Entity ID such as lock.* or sensor.*_registered_passcodes).
+      required: false
+      example: "lock.entry_currawang_entry"
       selector:
-        device:
+        text:
+    entity_id:
+      name: Target Entity
+      description: Optional entity ID of the keypad or paired lock.
+      required: false
+      selector:
+        entity:
           integration: sesame_ble
     passcode_or_id:
       name: Passcode PIN or Hex ID
@@ -112,11 +126,18 @@ update_passcode:
   description: Updates the nickname of an existing passcode on the Sesame Touch keypad.
   fields:
     device_id:
-      name: Device
-      description: The Sesame Touch device to update the passcode nickname for.
-      required: true
+      name: Keypad or Lock (Device or Entity)
+      description: The Sesame Touch keypad or paired lock (Device ID, or Entity ID such as lock.* or sensor.*_registered_passcodes).
+      required: false
+      example: "lock.entry_currawang_entry"
       selector:
-        device:
+        text:
+    entity_id:
+      name: Target Entity
+      description: Optional entity ID of the keypad or paired lock.
+      required: false
+      selector:
+        entity:
           integration: sesame_ble
     passcode_or_id:
       name: Passcode PIN or Hex ID
@@ -138,31 +159,28 @@ pair_lock:
   description: Pairs a Sesame Lock to the Sesame Touch keypad.
   fields:
     device_id:
-      name: Keypad Device
-      description: The Sesame Touch keypad device.
+      name: Keypad (Device or Entity)
+      description: The Sesame Touch keypad device ID or entity ID.
       required: true
       selector:
-        device:
-          integration: sesame_ble
+        text:
     lock_device_id:
-      name: Lock Device
-      description: The Sesame Lock device configured in Home Assistant to pair.
+      name: Lock (Device or Entity)
+      description: The Sesame Lock device ID or entity ID configured in Home Assistant to pair.
       required: true
       selector:
-        device:
-          integration: sesame_ble
+        text:
 
 unpair_lock:
   name: Unpair Lock
   description: Unpairs a Sesame Lock from the Sesame Touch keypad.
   fields:
     device_id:
-      name: Keypad Device
-      description: The Sesame Touch keypad device.
+      name: Keypad (Device or Entity)
+      description: The Sesame Touch keypad device ID or entity ID.
       required: true
       selector:
-        device:
-          integration: sesame_ble
+        text:
     lock_uuid:
       name: Lock UUID
       description: The UUID of the Sesame Lock to unpair (e.g. "01234567-89ab-cdef-0123-456789abcdef").
