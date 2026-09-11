@@ -22,9 +22,17 @@ logging.basicConfig(
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "custom_components/sesame_ble")))
 
 try:
-    from bleak import BleakScanner
-    from sesame_client import COMPANY_ID, ProductModels, SesameAdData, SesameQRCode
-    from sesame_client.device import SesameLock, SesameKeypad
+    from sesame_client import (
+        ProductModels,
+        SesameAdData,
+        SesameQRCode,
+        SesameLock,
+        SesameKeypad,
+        is_keypad_model,
+        create_sesame_device,
+        scan_sesame_devices,
+        find_sesame_device,
+    )
 except ImportError as err:
     print(f"Error: Required dependency missing. Make sure you run this in the virtual environment: {err}", file=sys.stderr)
     sys.exit(1)
@@ -33,33 +41,22 @@ except ImportError as err:
 async def scan_devices():
     """Scans for nearby Bluetooth devices and filters for Sesame hardware."""
     print("Scanning for Sesame devices... (scanning for 5 seconds)")
-    
-    found_devices = {}
 
-    def detection_callback(device, advertisement_data):
-        mfg_data = advertisement_data.manufacturer_data
-        if COMPANY_ID in mfg_data:
-            if device.address not in found_devices:
-                found_devices[device.address] = (device, advertisement_data)
-                raw_data = mfg_data[COMPANY_ID]
-                try:
-                    ad_data = SesameAdData.decode(raw_data)
-                    model_name = ProductModels(ad_data.model_id).name
-                    print(f"Device Found:")
-                    print(f"  Name: {device.name}")
-                    print(f"  MAC Address: {device.address}")
-                    print(f"  Model: {model_name} (ID: {ad_data.model_id})")
-                    print(f"  UUID: {ad_data.device_uuid}")
-                    print(f"  Registered: {ad_data.is_registered}")
-                    print("-" * 40)
-                except Exception as e:
-                    print(f"  Found Sesame device at {device.address} but failed to decode advertisement: {e}")
+    def detection_callback(device, ad_data):
+        try:
+            model_name = ProductModels(ad_data.model_id).name
+        except ValueError:
+            model_name = f"Unknown ({ad_data.model_id})"
+        print(f"Device Found:")
+        print(f"  Name: {device.name}")
+        print(f"  MAC Address: {device.address}")
+        print(f"  Model: {model_name} (ID: {ad_data.model_id})")
+        print(f"  UUID: {ad_data.device_uuid}")
+        print(f"  Registered: {ad_data.is_registered}")
+        print("-" * 40)
 
     try:
-        scanner = BleakScanner(detection_callback=detection_callback)
-        await scanner.start()
-        await asyncio.sleep(5.0)
-        await scanner.stop()
+        found_devices = await scan_sesame_devices(timeout=5.0, callback=detection_callback)
     except Exception as e:
         print(f"Failed to scan: {e}", file=sys.stderr)
         return
@@ -95,37 +92,12 @@ async def run_client(args):
         return 1
 
     print(f"Finding Bluetooth device {args.address}...")
-    scanner = BleakScanner()
-    await scanner.start()
-    ble_device = None
-    adv_data = None
-    for _ in range(50):
-        devices_and_data = scanner.discovered_devices_and_advertisement_data
-        for addr, (dev, adv) in devices_and_data.items():
-            if addr.upper() == args.address.upper():
-                ble_device = dev
-                adv_data = adv
-                break
-        if ble_device:
-            break
-        await asyncio.sleep(0.1)
-    await scanner.stop()
-
-    if not ble_device:
-        # Fallback to direct address lookup
-        ble_device = await BleakScanner.find_device_by_address(args.address, timeout=5.0)
-
-    if not ble_device:
+    result = await find_sesame_device(args.address, timeout=5.0)
+    if not result:
         print(f"Error: Bluetooth device {args.address} not found.", file=sys.stderr)
         return 1
 
-    # Try decoding advertisement data to discover model/UUID
-    ad_data = None
-    if adv_data and adv_data.manufacturer_data and COMPANY_ID in adv_data.manufacturer_data:
-        try:
-            ad_data = SesameAdData.decode(adv_data.manufacturer_data[COMPANY_ID])
-        except Exception:
-            pass
+    ble_device, ad_data = result
 
     if not ad_data:
         # Fallback to model/UUID from parsed QR URL or defaults
@@ -133,7 +105,10 @@ async def run_client(args):
         device_uuid = qr_info.device_uuid if qr_info else UUID("00000000-0000-0000-0000-000000000000")
         ad_data = SesameAdData(model_id=model_id, is_registered=not args.register, device_uuid=device_uuid)
 
-    model_name = ProductModels(ad_data.model_id).name
+    try:
+        model_name = ProductModels(ad_data.model_id).name
+    except ValueError:
+        model_name = f"Unknown ({ad_data.model_id})"
     print(f"Connecting to {model_name} at {args.address}...")
 
     # Status callback definition
@@ -153,16 +128,8 @@ async def run_client(args):
             print(f"  Battery Critical: {device.is_battery_critical}")
         print("-" * 38)
 
-    # Determine whether target is a Lock or a Keypad
-    is_keypad = ad_data.model_id in (
-        ProductModels.SESAME_TOUCH.value,
-        ProductModels.SESAME_TOUCH_PRO.value,
-        ProductModels.SESAME_TOUCH_2_PRO.value,
-    )
-    if is_keypad:
-        device = SesameKeypad(ble_device, ad_data, secret_key=secret_key, status_callback=status_callback)
-    else:
-        device = SesameLock(ble_device, ad_data, secret_key=secret_key, status_callback=status_callback)
+    device = create_sesame_device(ble_device, ad_data, secret_key=secret_key, status_callback=status_callback)
+    is_keypad = is_keypad_model(ad_data.model_id)
 
     try:
         await device.connect()
