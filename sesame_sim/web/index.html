@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sesame Hardware Simulator | Unicorn ARM Cortex-M4</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-branding">
+        <div class="logo-badge">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <div class="branding-text">
+          <h1>SESAME HARDWARE SIMULATOR</h1>
+          <p class="subtitle">ARM Cortex-M4 Firmware Emulation &bull; Unicorn Engine</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <div class="status-indicator">
+          <span class="pulse-dot"></span>
+          <span class="status-label">CORTEX-M4 RUNNING</span>
+        </div>
+        <div class="device-pill" id="conn-status-pill">BLE ADVERTISING</div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="main-layout">
+      <!-- Left Panel: Sesame 6 Pro Lock -->
+      <section class="device-card lock-card" id="lock-panel">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="device-badge">LOCK</span>
+            <h2>Sesame 6 Pro</h2>
+          </div>
+          <div class="lock-state-badge" id="lock-state-badge">LOCKED</div>
+        </div>
+
+        <!-- Lock Dial Interactive Graphic -->
+        <div class="dial-container">
+          <div class="rotary-housing">
+            <div class="degree-scale">
+              <span class="scale-mark top">0°</span>
+              <span class="scale-mark right">90°</span>
+              <span class="scale-mark bottom">180°</span>
+              <span class="scale-mark left">270°</span>
+            </div>
+            
+            <svg class="dial-svg" viewBox="0 0 240 240">
+              <circle cx="120" cy="120" r="105" class="dial-track" />
+              <circle cx="120" cy="120" r="105" class="dial-progress" id="dial-progress-arc" />
+            </svg>
+
+            <div class="thumbturn-disc" id="thumbturn-disc">
+              <div class="thumbturn-bar">
+                <div class="thumbturn-grip top-grip"></div>
+                <div class="thumbturn-indicator"></div>
+                <div class="thumbturn-grip bottom-grip"></div>
+              </div>
+              <div class="thumbturn-core">
+                <span class="angle-readout" id="angle-readout">0.0°</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="motor-activity" id="motor-activity">
+            <div class="gear-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </div>
+            <span id="motor-status-text">Motor Idle</span>
+          </div>
+        </div>
+
+        <!-- Lock Controls & Sliders -->
+        <div class="lock-controls">
+          <div class="button-row">
+            <button class="btn btn-action btn-lock" id="btn-lock">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <span>LOCK</span>
+            </button>
+            <button class="btn btn-action btn-unlock" id="btn-unlock">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
+              <span>UNLOCK</span>
+            </button>
+          </div>
+
+          <div class="slider-group">
+            <label for="manual-angle-slider">
+              <span>Manual Turnpiece Angle</span>
+              <span class="slider-val" id="slider-val-label">0°</span>
+            </label>
+            <input type="range" min="0" max="360" step="1" value="0" id="manual-angle-slider" class="range-slider">
+          </div>
+
+          <!-- Metadata info -->
+          <div class="meta-stats">
+            <div class="meta-item">
+              <span class="meta-key">Firmware</span>
+              <span class="meta-val" id="lock-fw-val">3.0-21-956bb2</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-key">BLE Address</span>
+              <span class="meta-val font-mono" id="lock-addr-val">FD:81:AA:BB:CC:21</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Center Panel: Sesame Touch 2 Pro Keypad -->
+      <section class="device-card keypad-card" id="keypad-panel">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="device-badge badge-accent">KEYPAD</span>
+            <h2>Sesame Touch 2 Pro</h2>
+          </div>
+          <!-- Buzzer & LED cluster -->
+          <div class="hardware-cluster">
+            <div class="buzzer-wave" id="buzzer-wave">
+              <span class="wave wave-1"></span>
+              <span class="wave wave-2"></span>
+              <span class="wave wave-3"></span>
+              <span class="buzzer-label">BUZZER</span>
+            </div>
+            <div class="led-bar">
+              <span class="led-light led-red" id="led-red" title="Red LED"></span>
+              <span class="led-light led-blue" id="led-blue" title="Blue LED"></span>
+              <span class="led-light led-green" id="led-green" title="Green LED"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Keypad Housing -->
+        <div class="keypad-housing">
+          <!-- LCD Buffer Display -->
+          <div class="keypad-lcd">
+            <div class="lcd-prompt">ENTER PIN</div>
+            <div class="lcd-buffer" id="lcd-buffer">_ _ _ _</div>
+          </div>
+
+          <!-- 3x4 Backlit Numeric Matrix -->
+          <div class="keypad-matrix">
+            <button class="key-btn" data-key="1"><span>1</span></button>
+            <button class="key-btn" data-key="2"><span>2</span><span class="sub-text">ABC</span></button>
+            <button class="key-btn" data-key="3"><span>3</span><span class="sub-text">DEF</span></button>
+            <button class="key-btn" data-key="4"><span>4</span><span class="sub-text">GHI</span></button>
+            <button class="key-btn" data-key="5"><span>5</span><span class="sub-text">JKL</span></button>
+            <button class="key-btn" data-key="6"><span>6</span><span class="sub-text">MNO</span></button>
+            <button class="key-btn" data-key="7"><span>7</span><span class="sub-text">PQRS</span></button>
+            <button class="key-btn" data-key="8"><span>8</span><span class="sub-text">TUV</span></button>
+            <button class="key-btn" data-key="9"><span>9</span><span class="sub-text">WXYZ</span></button>
+            <button class="key-btn key-special" data-key="*"><span>*</span><span class="sub-text">CLEAR</span></button>
+            <button class="key-btn" data-key="0"><span>0</span></button>
+            <button class="key-btn key-special key-enter" data-key="#"><span>#</span><span class="sub-text">ENTER</span></button>
+          </div>
+
+          <!-- Biometric & NFC Readers -->
+          <div class="sensors-row">
+            <div class="sensor-unit" id="fingerprint-sensor">
+              <div class="fp-ring">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"></path>
+                  <path d="M14 13.12c0 2.38 0 6.38-1 8.88"></path>
+                  <path d="M2 16h.01"></path>
+                  <path d="M21.8 16c.2-2 .131-5.354 0-6"></path>
+                  <path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2"></path>
+                  <path d="M5.07 12.5C5 11.75 5 10.84 5 10a7 7 0 0 1 14 0c0 1.06 0 2.22-.07 3"></path>
+                </svg>
+              </div>
+              <span>Tap Fingerprint</span>
+            </div>
+
+            <div class="sensor-unit" id="nfc-card-sensor">
+              <div class="nfc-card-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                  <line x1="2" y1="10" x2="22" y2="10"></line>
+                </svg>
+              </div>
+              <span>Tap NFC Card</span>
+            </div>
+          </div>
+
+          <!-- Keypad stats -->
+          <div class="meta-stats">
+            <div class="meta-item">
+              <span class="meta-key">Firmware</span>
+              <span class="meta-val" id="keypad-fw-val">3.0-9-e877d5</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-key">BLE Address</span>
+              <span class="meta-val font-mono" id="keypad-addr-val">FD:81:AA:BB:CC:26</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Live Protocol & Event Log -->
+      <section class="device-card log-card">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="device-badge badge-terminal">MONITOR</span>
+            <h2>Execution &amp; BLE Log</h2>
+          </div>
+          <button class="btn-clear" id="btn-clear-log" title="Clear log">CLEAR</button>
+        </div>
+
+        <div class="terminal-container" id="terminal-log">
+          <div class="log-entry system">
+            <span class="log-time">00:00:00</span>
+            <span class="log-src">[SYSTEM]</span>
+            <span class="log-msg">Simulation initialized. Listening on WebSocket...</span>
+          </div>
+        </div>
+
+        <!-- CLI Quick Connect Drawer -->
+        <div class="quick-connect-box">
+          <div class="qc-header">
+            <span class="qc-title">PAIRING &amp; CLI TEST</span>
+          </div>
+          <div class="qc-cmd">
+            <code>python sesame_cli.py --simulator --address FD:81:AA:BB:CC:21 status</code>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
