@@ -897,3 +897,118 @@ async def test_bluetooth_confirm_empty_input() -> None:
     assert flow.async_show_form.call_args[1]["errors"][CONF_SECRET_KEY] == "invalid_secret_key"
 
 
+@pytest.mark.asyncio
+@patch("sesame_ble.config_flow.async_register_callback")
+@patch("sesame_ble.config_flow.async_rediscover_address")
+async def test_bluetooth_watcher_resets_stale_flow_on_broadcast_change(
+    mock_rediscover, mock_register_callback
+) -> None:
+    """Tests that active advertisement watcher aborts stale flow and triggers rediscovery when registration status flips."""
+    flow = SesameBLEConfigFlow()
+    flow.flow_id = "test_flow_id"
+    flow.hass = MagicMock()
+    flow.async_step_bluetooth_confirm = AsyncMock(return_value="confirm_step")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    mfg_data_registered = struct.pack("<HB16s", 26, 1, TEST_UUID.bytes) # Model 26 (Touch 2 Pro), is_registered = True
+    discovery_info = MagicMock()
+    discovery_info.address = "DE:34:B7:06:2E:56"
+    discovery_info.advertisement.manufacturer_data = {COMPANY_ID: mfg_data_registered}
+
+    # Run initial discovery step (registered)
+    await flow.async_step_bluetooth(discovery_info)
+
+    # Watcher callback must have been registered
+    assert mock_register_callback.call_count == 1
+    call_args = mock_register_callback.call_args
+    adv_callback = call_args[0][1]
+    match_dict = call_args[0][2]
+    assert match_dict["address"] == "DE:34:B7:06:2E:56"
+
+    # Simulate device being reset: keypad advertises with is_registered = False (1a 00 00...)
+    mfg_data_unregistered = struct.pack("<HB16s", 26, 0, TEST_UUID.bytes)
+    reset_adv_info = MagicMock()
+    reset_adv_info.address = "DE:34:B7:06:2E:56"
+    reset_adv_info.advertisement.manufacturer_data = {COMPANY_ID: mfg_data_unregistered}
+
+    # Invoke the watcher callback
+    adv_callback(reset_adv_info, MagicMock())
+
+    # Flow should abort itself and call rediscovery
+    flow.hass.config_entries.flow.async_abort.assert_called_once_with(flow.flow_id)
+    mock_rediscover.assert_called_once_with(flow.hass, "DE:34:B7:06:2E:56")
+
+
+@pytest.mark.asyncio
+@patch("sesame_ble.config_flow.async_last_service_info")
+async def test_bluetooth_confirm_auto_switches_when_device_reset(mock_last_service_info) -> None:
+    """Tests that opening bluetooth_confirm auto-detects a reset device from latest broadcast and switches to register confirm."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow._mac_address = "DE:34:B7:06:2E:56"
+    flow.async_step_bluetooth_register_confirm = AsyncMock(return_value="register_confirm_view")
+
+    # Latest advertisement in HA cache indicates device was reset (is_registered = 0)
+    mfg_data_unregistered = struct.pack("<HB16s", 26, 0, TEST_UUID.bytes)
+    latest_info = MagicMock()
+    latest_info.address = "DE:34:B7:06:2E:56"
+    latest_info.advertisement.manufacturer_data = {COMPANY_ID: mfg_data_unregistered}
+    mock_last_service_info.return_value = latest_info
+
+    result = await flow.async_step_bluetooth_confirm(user_input=None)
+
+    assert result == "register_confirm_view"
+    flow.async_step_bluetooth_register_confirm.assert_called_once()
+    assert flow._sesame_adv_data.is_registered is False
+
+
+@pytest.mark.asyncio
+@patch("sesame_ble.config_flow.async_last_service_info")
+async def test_bluetooth_register_confirm_auto_switches_when_device_registered(mock_last_service_info) -> None:
+    """Tests that opening bluetooth_register_confirm auto-detects a paired device and switches to confirm."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow._mac_address = "DE:34:B7:06:2E:56"
+    flow._discovery_info = MagicMock()
+    flow._sesame_adv_data = SesameAdData.decode(struct.pack("<HB16s", 26, 0, TEST_UUID.bytes))
+    flow.async_step_bluetooth_confirm = AsyncMock(return_value="confirm_view")
+
+    # Latest advertisement in HA cache indicates device was paired/registered
+    mfg_data_registered = struct.pack("<HB16s", 26, 1, TEST_UUID.bytes)
+    latest_info = MagicMock()
+    latest_info.address = "DE:34:B7:06:2E:56"
+    latest_info.advertisement.manufacturer_data = {COMPANY_ID: mfg_data_registered}
+    mock_last_service_info.return_value = latest_info
+
+    result = await flow.async_step_bluetooth_register_confirm(user_input=None)
+
+    assert result == "confirm_view"
+    flow.async_step_bluetooth_confirm.assert_called_once()
+    assert flow._sesame_adv_data.is_registered is True
+
+
+@pytest.mark.asyncio
+async def test_bluetooth_step_aborts_stale_in_progress_flow() -> None:
+    """Tests that async_step_bluetooth aborts any existing in-progress flow for the same MAC before setting unique id."""
+    flow = SesameBLEConfigFlow()
+    flow.hass = MagicMock()
+    flow.async_step_bluetooth_confirm = AsyncMock(return_value="confirm_step")
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+
+    # Simulate an existing in-progress flow for this MAC
+    flow._async_in_progress = MagicMock(return_value=[{"flow_id": "stale_flow_123"}])
+
+    mfg_data = struct.pack("<HB16s", 26, 1, TEST_UUID.bytes)
+    discovery_info = MagicMock()
+    discovery_info.address = "DE:34:B7:06:2E:56"
+    discovery_info.advertisement.manufacturer_data = {COMPANY_ID: mfg_data}
+
+    await flow.async_step_bluetooth(discovery_info)
+
+    flow.hass.config_entries.flow.async_abort.assert_called_once_with("stale_flow_123")
+    flow.async_set_unique_id.assert_called_once()
+
+
+

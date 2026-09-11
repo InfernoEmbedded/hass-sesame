@@ -22,6 +22,8 @@ class MockConfigFlow:
         pass
     def async_show_menu(self, *args, **kwargs):
         pass
+    def _async_in_progress(self, *args, **kwargs):
+        return []
 
 class MockEntity:
     def __init__(self):
@@ -76,10 +78,10 @@ exceptions = mock_module("homeassistant.exceptions", {
 device_registry = mock_module("homeassistant.helpers.device_registry", {
     "format_mac": lambda x: x,
     "CONNECTION_BLUETOOTH": "bluetooth",
-    "async_get": MagicMock,
+    "async_get": lambda hass: MagicMock(),
 })
 entity_registry = mock_module("homeassistant.helpers.entity_registry", {
-    "async_get": MagicMock,
+    "async_get": lambda hass: MagicMock(),
 })
 entity = mock_module("homeassistant.helpers.entity", {
     "DeviceInfo": dict,
@@ -180,6 +182,9 @@ bluetooth_mock = mock_module("homeassistant.components.bluetooth", {
     "async_get_advertisement_data": MagicMock(),
     "BluetoothServiceInfoBleak": MagicMock,
     "async_last_service_info": MagicMock(),
+    "async_rediscover_address": MagicMock(),
+    "async_register_callback": MagicMock(),
+    "BluetoothScanningMode": MagicMock(PASSIVE="passive", ACTIVE="active"),
 })
 class MockHomeAssistantView:
     def __init__(self, *args, **kwargs):

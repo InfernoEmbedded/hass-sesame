@@ -1,3 +1,4 @@
+from collections.abc import Callable
 import logging
 from typing import Any
 from urllib import parse
@@ -5,10 +6,15 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import (
+    BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
+    async_last_service_info,
+    async_rediscover_address,
+    async_register_callback,
 )
 from homeassistant.components.file_upload import process_uploaded_file
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.helpers.device_registry import format_mac
@@ -128,6 +134,69 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._mac_address: str | None = None
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._sesame_adv_data: SesameAdData | None = None
+        self._cancel_watcher: Callable[[], None] | None = None
+
+    @callback
+    def async_remove(self) -> None:
+        """Notification that the flow has been removed."""
+        self._cancel_advertisement_watcher()
+        super().async_remove()
+
+    def _register_advertisement_watcher(self) -> None:
+        """Register a passive BLE callback to monitor for broadcast state changes while flow is open."""
+        if self._cancel_watcher or not self._mac_address:
+            return
+
+        @callback
+        def _async_on_advertisement(
+            service_info: BluetoothServiceInfoBleak, change: BluetoothChange
+        ) -> None:
+            mfg_tuple = get_sesame_mfg_data(service_info.advertisement.manufacturer_data)
+            if not mfg_tuple:
+                return
+            _, mfg_data = mfg_tuple
+            try:
+                latest_adv = SesameAdData.decode(mfg_data)
+            except Exception:
+                return
+
+            if (
+                self._sesame_adv_data
+                and latest_adv.is_registered != self._sesame_adv_data.is_registered
+            ):
+                logger.info(
+                    "Device %s changed registration state in advertisement (was %s, now %s). Expiring discovery flow.",
+                    self._mac_address,
+                    self._sesame_adv_data.is_registered,
+                    latest_adv.is_registered,
+                )
+                self._cancel_advertisement_watcher()
+                flow_id = getattr(self, "flow_id", None)
+                if flow_id and hasattr(self.hass, "config_entries") and hasattr(self.hass.config_entries, "flow"):
+                    self.hass.config_entries.flow.async_abort(flow_id)
+                async_rediscover_address(self.hass, self._mac_address)
+            else:
+                self._discovery_info = service_info
+                self._sesame_adv_data = latest_adv
+
+        try:
+            self._cancel_watcher = async_register_callback(
+                self.hass,
+                _async_on_advertisement,
+                {"address": self._mac_address, "connectable": True},
+                BluetoothScanningMode.PASSIVE,
+            )
+        except Exception as err:
+            logger.debug("Could not register BLE watcher for %s: %s", self._mac_address, err)
+
+    def _cancel_advertisement_watcher(self) -> None:
+        """Cancel the active BLE advertisement watcher."""
+        if self._cancel_watcher:
+            try:
+                self._cancel_watcher()
+            except Exception:
+                pass
+            self._cancel_watcher = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -419,8 +488,6 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle bluetooth discovery."""
         mac_address = discovery_info.address
         formatted_mac = format_mac(mac_address)
-        await self.async_set_unique_id(formatted_mac)
-        self._abort_if_unique_id_configured()
 
         mfg_hex = {
             f"0x{cid:04X} ({cid})": data.hex()
@@ -446,6 +513,21 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception:
             return self.async_abort(reason="invalid_mfg_data")
 
+        # Expire / abort any previous in-progress discovery flow for this device
+        if hasattr(self, "_async_in_progress"):
+            for progress in self._async_in_progress(
+                include_uninitialized=True, match_context={"unique_id": formatted_mac}
+            ):
+                logger.info(
+                    "New broadcast received for %s. Aborting previous in-progress flow %s.",
+                    formatted_mac,
+                    progress["flow_id"],
+                )
+                self.hass.config_entries.flow.async_abort(progress["flow_id"])
+
+        await self.async_set_unique_id(formatted_mac)
+        self._abort_if_unique_id_configured()
+
         friendly_model = FRIENDLY_MODELS.get(model_name, model_name)
         self.context["title_placeholders"] = {
             "name": f"Sesame {friendly_model} ({mac_address[-5:]})"
@@ -453,6 +535,8 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._mac_address = mac_address
         self._discovery_info = discovery_info
         self._sesame_adv_data = sesame_adv_data
+
+        self._register_advertisement_watcher()
 
         if not sesame_adv_data.is_registered:
             return await self.async_step_bluetooth_register_confirm()
@@ -465,6 +549,30 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Confirm discovery and request secret key (hex) or QR code for already registered device."""
         errors: dict[str, str] = {}
+
+        # Check if the latest advertisement shows the device has been reset to unregistered
+        if user_input is None and self._mac_address:
+            latest_service_info = async_last_service_info(
+                self.hass, self._mac_address, connectable=True
+            )
+            if latest_service_info:
+                mfg_tuple = get_sesame_mfg_data(
+                    latest_service_info.advertisement.manufacturer_data
+                )
+                if mfg_tuple:
+                    _, mfg_data = mfg_tuple
+                    try:
+                        latest_adv = SesameAdData.decode(mfg_data)
+                        if not latest_adv.is_registered:
+                            logger.info(
+                                "Device %s was reset to unregistered since discovery; switching to register confirm",
+                                self._mac_address,
+                            )
+                            self._discovery_info = latest_service_info
+                            self._sesame_adv_data = latest_adv
+                            return await self.async_step_bluetooth_register_confirm()
+                    except Exception:
+                        pass
 
         if user_input is not None:
             raw_secret_key = (user_input.get(CONF_SECRET_KEY) or "").strip()
@@ -552,6 +660,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 elif qr_info and qr_info.device_uuid:
                     data[CONF_DEVICE_UUID] = str(qr_info.device_uuid)
 
+                self._cancel_advertisement_watcher()
                 return self.async_create_entry(
                     title=title,
                     data=data,
@@ -580,6 +689,30 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not self._discovery_info or not self._sesame_adv_data:
             return await self.async_step_user()
 
+        # Check if the latest advertisement shows the device is now registered
+        if user_input is None and self._mac_address:
+            latest_service_info = async_last_service_info(
+                self.hass, self._mac_address, connectable=True
+            )
+            if latest_service_info:
+                mfg_tuple = get_sesame_mfg_data(
+                    latest_service_info.advertisement.manufacturer_data
+                )
+                if mfg_tuple:
+                    _, mfg_data = mfg_tuple
+                    try:
+                        latest_adv = SesameAdData.decode(mfg_data)
+                        if latest_adv.is_registered:
+                            logger.info(
+                                "Device %s is already registered in latest broadcast; switching to confirm",
+                                self._mac_address,
+                            )
+                            self._discovery_info = latest_service_info
+                            self._sesame_adv_data = latest_adv
+                            return await self.async_step_bluetooth_confirm()
+                    except Exception:
+                        pass
+
         model_name = ProductModels(self._sesame_adv_data.model_id).name
         friendly_model = FRIENDLY_MODELS.get(model_name, model_name)
 
@@ -594,6 +727,7 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(formatted_mac)
                 self._abort_if_unique_id_configured()
 
+                self._cancel_advertisement_watcher()
                 return self.async_create_entry(
                     title=f"Sesame {friendly_model} ({self._mac_address[-5:]})",
                     data={
