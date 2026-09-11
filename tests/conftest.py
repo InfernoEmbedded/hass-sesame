@@ -83,8 +83,30 @@ device_registry = mock_module("homeassistant.helpers.device_registry", {
 entity_registry = mock_module("homeassistant.helpers.entity_registry", {
     "async_get": lambda hass: MagicMock(),
 })
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass(frozen=True, kw_only=True)
+class MockEntityDescription:
+    key: str = ""
+    name: str | None = None
+    icon: str | None = None
+    entity_category: Any = None
+    device_class: Any = None
+    state_class: Any = None
+
+@dataclass(frozen=True, kw_only=True)
+class MockButtonEntityDescription(MockEntityDescription):
+    pass
+
+@dataclass(frozen=True, kw_only=True)
+class MockSensorEntityDescription(MockEntityDescription):
+    native_unit_of_measurement: str | None = None
+    suggested_display_precision: int | None = None
+
 entity = mock_module("homeassistant.helpers.entity", {
     "DeviceInfo": dict,
+    "EntityDescription": MockEntityDescription,
 })
 entity_platform = mock_module("homeassistant.helpers.entity_platform", {
     "AddEntitiesCallback": MagicMock,
@@ -159,6 +181,7 @@ lock = mock_module("homeassistant.components.lock", {
 })
 sensor = mock_module("homeassistant.components.sensor", {
     "SensorEntity": MockSensorEntity,
+    "SensorEntityDescription": MockSensorEntityDescription,
     "SensorDeviceClass": MagicMock(),
     "SensorStateClass": MagicMock(),
 })
@@ -168,6 +191,7 @@ binary_sensor = mock_module("homeassistant.components.binary_sensor", {
 })
 button = mock_module("homeassistant.components.button", {
     "ButtonEntity": MockButtonEntity,
+    "ButtonEntityDescription": MockButtonEntityDescription,
 })
 number = mock_module("homeassistant.components.number", {
     "NumberEntity": MockNumberEntity,

@@ -1,28 +1,198 @@
 """Platform for Sesame BLE sensor integration."""
 
 import asyncio
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .__init__ import SesameDeviceWrapper, is_keypad_model, get_supported_auth_methods
 
-
-from .sesame_client import SesameKeypad
-
-
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SesameSensorDescription(SensorEntityDescription):
+    """Class describing Sesame BLE sensor entities."""
+
+    value_fn: Callable[[SesameDeviceWrapper], Any]
+    attrs_fn: Callable[[SesameDeviceWrapper], dict[str, Any]] | None = None
+    always_available: bool = False
+    init_task_fn: Callable[[Any], Coroutine[Any, Any, None]] | None = None
+
+
+async def _fetch_passcodes_on_start(sensor: Any) -> None:
+    """Fetch registered passcodes list via BLE in the background."""
+    for _ in range(30):
+        if sensor.device.is_logged_in:
+            break
+        await asyncio.sleep(1)
+
+    if sensor.device.is_logged_in:
+        try:
+            await sensor.device.get_passcodes()
+            sensor.async_write_ha_state()
+        except Exception as e:
+            logger.warning("Failed to fetch initial passcode list: %s", e)
+
+
+def _get_rssi(wrapper: SesameDeviceWrapper) -> int | None:
+    from homeassistant.components import bluetooth
+    service_info = bluetooth.async_last_service_info(
+        wrapper.hass, wrapper.ble_device.address
+    )
+    if service_info:
+        return service_info.rssi
+    return None
+
+
+SENSOR_DESCRIPTIONS_COMMON: tuple[SesameSensorDescription, ...] = (
+    SesameSensorDescription(
+        key="battery",
+        name="Battery",
+        device_class=SensorDeviceClass.BATTERY,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=PERCENTAGE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda w: getattr(w.device, "battery_percentage", None),
+    ),
+)
+
+SENSOR_DESC_CARD = SesameSensorDescription(
+    key="registered_cards",
+    name="Registered Cards",
+    icon="mdi:credit-card-outline",
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda w: getattr(w.device, "cards_count", None),
+)
+
+SENSOR_DESC_FINGERPRINT = SesameSensorDescription(
+    key="registered_fingerprints",
+    name="Registered Fingerprints",
+    icon="mdi:fingerprint",
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda w: getattr(w.device, "fingerprints_count", None),
+)
+
+SENSOR_DESC_PASSCODE = SesameSensorDescription(
+    key="registered_passcodes",
+    name="Registered Passcodes",
+    icon="mdi:keyboard-outline",
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda w: getattr(w.device, "passcodes_count", None),
+    attrs_fn=lambda w: {"passcodes": getattr(w.device, "passcodes", {})},
+    init_task_fn=_fetch_passcodes_on_start,
+)
+
+SENSOR_DESC_FACE = SesameSensorDescription(
+    key="registered_faces",
+    name="Registered Faces",
+    icon="mdi:face-recognition",
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda w: len(w.logical_faces) if hasattr(w, "logical_faces") else getattr(w.device, "faces_count", None),
+)
+
+SENSOR_DESC_PALM = SesameSensorDescription(
+    key="registered_palms",
+    name="Registered Palms",
+    icon="mdi:hand-wave",
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda w: len(w.logical_palms) if hasattr(w, "logical_palms") else getattr(w.device, "palms_count", None),
+)
+
+SENSOR_DESC_PAIRED_LOCKS = SesameSensorDescription(
+    key="paired_locks",
+    name="Paired Locks",
+    icon="mdi:lock-link",
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda w: len(w.device.paired_locks) if hasattr(w.device, "paired_locks") and w.device.paired_locks else (0 if hasattr(w.device, "paired_locks") else None),
+    attrs_fn=lambda w: {"paired_locks": getattr(w.device, "paired_locks", [])},
+)
+
+SENSOR_DESCRIPTIONS_LOCK: tuple[SesameSensorDescription, ...] = (
+    SesameSensorDescription(
+        key="locked_position",
+        name="Locked Position",
+        icon="mdi:lock",
+        native_unit_of_measurement="°",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda w: getattr(w.device, "lock_position", None),
+    ),
+    SesameSensorDescription(
+        key="unlocked_position",
+        name="Unlocked Position",
+        icon="mdi:lock-open",
+        native_unit_of_measurement="°",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda w: getattr(w.device, "unlock_position", None),
+    ),
+    SesameSensorDescription(
+        key="current_angle",
+        name="Current Angle",
+        icon="mdi:rotate-right",
+        native_unit_of_measurement="°",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda w: getattr(w.device, "current_angle", None),
+    ),
+)
+
+SENSOR_DESC_RSSI = SesameSensorDescription(
+    key="rssi",
+    name="Signal Strength",
+    device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+    state_class=SensorStateClass.MEASUREMENT,
+    native_unit_of_measurement="dBm",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    always_available=True,
+    value_fn=_get_rssi,
+)
+
+SENSOR_DESC_CONNECTION = SesameSensorDescription(
+    key="connection_state",
+    name="Connection State",
+    icon="mdi:bluetooth-connect",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    always_available=True,
+    value_fn=lambda w: "connected" if w.device.is_connected else "disconnected",
+    attrs_fn=lambda w: {
+        "is_connected": w.device.is_connected,
+        "is_logged_in": w.device.is_logged_in,
+    },
+)
+
+SENSOR_DESCRIPTIONS_DIAGNOSTIC: tuple[SesameSensorDescription, ...] = (
+    SENSOR_DESC_RSSI,
+    SENSOR_DESC_CONNECTION,
+)
+
+
+def SesameRSSISensor(wrapper: SesameDeviceWrapper) -> SesameSensor:
+    """Backward compatibility helper for tests."""
+    return SesameSensor(wrapper, SENSOR_DESC_RSSI)
+
+
+def SesameConnectionSensor(wrapper: SesameDeviceWrapper) -> SesameSensor:
+    """Backward compatibility helper for tests."""
+    return SesameSensor(wrapper, SENSOR_DESC_CONNECTION)
 
 
 async def async_setup_entry(
@@ -32,75 +202,69 @@ async def async_setup_entry(
 ) -> None:
     """Set up sensor entities for Candy House Sesame BLE device."""
     wrapper: SesameDeviceWrapper = hass.data[DOMAIN][entry.entry_id]
-    
-    entities = [
-        SesameBatterySensor(wrapper),
-    ]
-    
-    # Keypad specific sensors based on model capabilities
+
+    descriptions: list[SesameSensorDescription] = list(SENSOR_DESCRIPTIONS_COMMON)
+
     if is_keypad_model(wrapper.model_name):
         supported_methods = get_supported_auth_methods(wrapper.model_name)
-        
         if "card" in supported_methods:
-            entities.append(SesameTouchCardSensor(wrapper))
+            descriptions.append(SENSOR_DESC_CARD)
         if "fingerprint" in supported_methods:
-            entities.append(SesameTouchFingerprintSensor(wrapper))
-            
-        entities.append(SesameTouchPasscodeSensor(wrapper))
-        
+            descriptions.append(SENSOR_DESC_FINGERPRINT)
+        descriptions.append(SENSOR_DESC_PASSCODE)
         if "face" in supported_methods:
-            entities.append(SesameTouchFaceSensor(wrapper))
+            descriptions.append(SENSOR_DESC_FACE)
         if "palm" in supported_methods:
-            entities.append(SesameTouchPalmSensor(wrapper))
-            
-        entities.append(SesameTouchPairedLocksSensor(wrapper))
+            descriptions.append(SENSOR_DESC_PALM)
+        descriptions.append(SENSOR_DESC_PAIRED_LOCKS)
     else:
+        descriptions.extend(SENSOR_DESCRIPTIONS_LOCK)
+
+    descriptions.extend(SENSOR_DESCRIPTIONS_DIAGNOSTIC)
+
+    async_add_entities([SesameSensor(wrapper, desc) for desc in descriptions])
 
 
+class SesameSensor(SensorEntity):
+    """Representation of a Sesame BLE sensor entity."""
 
-        # Lock specific diagnostic sensors
-        entities.extend([
-            SesameLockLockedPositionSensor(wrapper),
-            SesameLockUnlockedPositionSensor(wrapper),
-            SesameLockCurrentPositionSensor(wrapper),
-        ])
+    entity_description: SesameSensorDescription
 
-    # Append diagnostic/diagnostics sensors at the end
-    entities.extend([
-        SesameRSSISensor(wrapper),
-        SesameConnectionSensor(wrapper),
-    ])
-
-    async_add_entities(entities)
-
-
-
-
-class SesameBaseSensor(SensorEntity):
-    """Base class for Sesame BLE sensors."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper, name_suffix: str, unique_id_suffix: str) -> None:
+    def __init__(self, wrapper: SesameDeviceWrapper, description: SesameSensorDescription) -> None:
         """Initialize the sensor."""
         self.wrapper = wrapper
         self.device = wrapper.device
-        self._attr_name = name_suffix
-        self._attr_unique_id = f"{wrapper.entry.unique_id}_{unique_id_suffix}"
+        self.entity_description = description
+        self._attr_name = description.name
+        self._attr_unique_id = f"{wrapper.entry.unique_id}_{description.key}"
+        self._attr_icon = description.icon
+        self._attr_device_class = description.device_class
+        self._attr_state_class = description.state_class
+        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
+        self._attr_entity_category = description.entity_category
         self._unregister_status_callback = None
+        self._init_task = None
 
     async def async_added_to_hass(self) -> None:
         """Register callbacks when added to Home Assistant."""
         self._unregister_status_callback = self.wrapper.register_update_listener(
             self.async_write_ha_state
         )
+        if self.entity_description.init_task_fn:
+            self._init_task = asyncio.create_task(self.entity_description.init_task_fn(self))
 
     async def async_will_remove_from_hass(self) -> None:
         """Unregister callbacks when removed."""
         if self._unregister_status_callback:
             self._unregister_status_callback()
+        if self._init_task:
+            self._init_task.cancel()
 
     @property
     def available(self) -> bool:
-        """Return true if the device is connected and logged in."""
+        """Return true if the device is connected and logged in, or if sensor is always available."""
+        if self.entity_description.always_available:
+            return True
         return self.device.is_logged_in
 
     @property
@@ -113,297 +277,20 @@ class SesameBaseSensor(SensorEntity):
             model=self.wrapper.model_name,
         )
 
-
-class SesameBatterySensor(SesameBaseSensor):
-    """Battery sensor for Sesame BLE devices."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the battery sensor."""
-        super().__init__(wrapper, "Battery", "battery")
-        self._attr_device_class = SensorDeviceClass.BATTERY
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = PERCENTAGE
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-
     @property
-    def native_value(self) -> int | None:
-        """Return the current battery level."""
+    def native_value(self) -> Any:
+        """Return the native sensor value."""
         try:
-            return self.device.battery_percentage
+            return self.entity_description.value_fn(self.wrapper)
         except Exception:
             return None
 
-
-class SesameTouchCardSensor(SesameBaseSensor):
-    """NFC/IC Cards count sensor for Sesame Touch."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the card sensor."""
-        super().__init__(wrapper, "Registered Cards", "registered_cards")
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:credit-card-outline"
-
     @property
-    def native_value(self) -> int | None:
-        """Return the number of cards registered."""
-        try:
-            return self.device.cards_count
-        except Exception:
-            return None
-
-
-class SesameTouchFingerprintSensor(SesameBaseSensor):
-    """Fingerprints count sensor for Sesame Touch."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the fingerprint sensor."""
-        super().__init__(wrapper, "Registered Fingerprints", "registered_fingerprints")
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:fingerprint"
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the number of fingerprints registered."""
-        try:
-            return self.device.fingerprints_count
-        except Exception:
-            return None
-
-
-class SesameTouchPasscodeSensor(SesameBaseSensor):
-    """Passcodes count sensor for Sesame Touch."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the passcode sensor."""
-        super().__init__(wrapper, "Registered Passcodes", "registered_passcodes")
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:keyboard-outline"
-        self._passcodes_list: dict[str, dict] = {}
-        self._sync_task: asyncio.Task | None = None
-
-    async def async_added_to_hass(self) -> None:
-        """Register callbacks and trigger passcode sync on startup."""
-        await super().async_added_to_hass()
-        # Fetch the passcodes list on start in the background
-        self._sync_task = asyncio.create_task(self._fetch_passcodes())
-
-    async def _fetch_passcodes(self) -> None:
-        """Fetch registered passcodes list via BLE."""
-        # Wait until wrapper device is ready and logged in
-        for _ in range(30):
-            if self.device.is_logged_in:
-                break
-            await asyncio.sleep(1)
-
-        if self.device.is_logged_in:
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return extra state attributes if configured."""
+        if self.entity_description.attrs_fn:
             try:
-                sesame_touch: SesameKeypad = self.device
-                await sesame_touch.get_passcodes()
-                self._passcodes_list = sesame_touch.passcodes
-                self.async_write_ha_state()
-            except Exception as e:
-                logger.warning("Failed to fetch initial passcode list: %s", e)
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the number of passcodes registered."""
-        try:
-            return self.device.passcodes_count
-        except Exception:
-            return None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return passcode list as attributes."""
-        # Sync the latest passcodes list from the device memory
-        if hasattr(self.device, "passcodes"):
-            self._passcodes_list = self.device.passcodes
-        return {"passcodes": self._passcodes_list}
-
-
-class SesameTouchFaceSensor(SesameBaseSensor):
-    """Faces count sensor for Sesame Keypad."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the face sensor."""
-        super().__init__(wrapper, "Registered Faces", "registered_faces")
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:face-recognition"
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the number of faces registered."""
-        try:
-            if hasattr(self.wrapper, "logical_faces"):
-                return len(self.wrapper.logical_faces)
-            return getattr(self.device, "faces_count", None)
-        except Exception:
-            return None
-
-
-class SesameTouchPalmSensor(SesameBaseSensor):
-    """Palms count sensor for Sesame Keypad."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the palm sensor."""
-        super().__init__(wrapper, "Registered Palms", "registered_palms")
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:hand-wave"
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the number of palms registered."""
-        try:
-            if hasattr(self.wrapper, "logical_palms"):
-                return len(self.wrapper.logical_palms)
-            return getattr(self.device, "palms_count", None)
-        except Exception:
-            return None
-
-
-class SesameLockLockedPositionSensor(SesameBaseSensor):
-
-    """Sensor to show the calibrated locked position angle."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the locked position sensor."""
-        super().__init__(wrapper, "Locked Position", "locked_position")
-        self._attr_native_unit_of_measurement = "°"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:lock"
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the locked position angle."""
-        try:
-            return self.device.lock_position
-        except Exception:
-            return None
-
-
-class SesameLockUnlockedPositionSensor(SesameBaseSensor):
-    """Sensor to show the calibrated unlocked position angle."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the unlocked position sensor."""
-        super().__init__(wrapper, "Unlocked Position", "unlocked_position")
-        self._attr_native_unit_of_measurement = "°"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:lock-open"
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the unlocked position angle."""
-        try:
-            return self.device.unlock_position
-        except Exception:
-            return None
-
-
-class SesameLockCurrentPositionSensor(SesameBaseSensor):
-    """Sensor to show the current lock angle."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the current position sensor."""
-        super().__init__(wrapper, "Current Angle", "current_angle")
-        self._attr_native_unit_of_measurement = "°"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:rotate-right"
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the current position angle."""
-        try:
-            return self.device.current_angle
-        except Exception:
-            return None
-
-
-class SesameTouchPairedLocksSensor(SesameBaseSensor):
-    """Paired locks count and details sensor for Sesame Touch."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the paired locks sensor."""
-        super().__init__(wrapper, "Paired Locks", "paired_locks")
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:lock-link"
-        self._paired_locks: list[dict[str, Any]] = []
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the number of paired locks."""
-        try:
-            return len(self.device.paired_locks)
-        except Exception:
-            return None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the list of paired locks as attributes."""
-        if hasattr(self.device, "paired_locks"):
-            self._paired_locks = self.device.paired_locks
-        return {"paired_locks": self._paired_locks}
-
-
-class SesameRSSISensor(SesameBaseSensor):
-    """RSSI sensor for Sesame BLE devices."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the RSSI sensor."""
-        super().__init__(wrapper, "Signal Strength", "rssi")
-        self._attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = "dBm"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    @property
-    def available(self) -> bool:
-        """RSSI sensor is always available."""
-        return True
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the RSSI value."""
-        from homeassistant.components import bluetooth
-        service_info = bluetooth.async_last_service_info(
-            self.wrapper.hass, self.wrapper.ble_device.address
-        )
-        if service_info:
-            return service_info.rssi
+                return self.entity_description.attrs_fn(self.wrapper)
+            except Exception:
+                return {}
         return None
-
-
-class SesameConnectionSensor(SesameBaseSensor):
-    """Sensor to report connection status."""
-
-    def __init__(self, wrapper: SesameDeviceWrapper) -> None:
-        """Initialize the connection sensor."""
-        super().__init__(wrapper, "Connection State", "connection_state")
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:bluetooth-connect"
-
-    @property
-    def available(self) -> bool:
-        """Connection sensor is always available."""
-        return True
-
-    @property
-    def native_value(self) -> str:
-        """Return the connection state."""
-        return "connected" if self.device.is_connected else "disconnected"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return connection attributes."""
-        return {
-            "is_connected": self.device.is_connected,
-            "is_logged_in": self.device.is_logged_in,
-        }
-
-
