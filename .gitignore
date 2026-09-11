@@ -19,3 +19,12 @@ htmlcov/
 # Sesame BLE APK and decompilation outputs
 sesame_apk/
 androguard.log
+
+# Ghidra and reverse engineering artifacts
+*.gpr
+*.rep/
+*.lock
+*.lock~
+*.bin
+Mindyigari.md
+gomalock_repo/
