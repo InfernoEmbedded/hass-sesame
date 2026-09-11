@@ -377,8 +377,81 @@ def test_biometric_face_and_palm_payload_parsing() -> None:
     keypad.on_published(ITEM_PALM_NOTIFY, palm_payload)
     keypad.on_published(ITEM_PALM_LAST, b"")
 
+
     assert len(keypad.palms) == 1
     assert keypad.palms[palm_id.hex()]["name"] == "Bob Palm"
+
+
+def test_touch_2_pro_mech_status_payload() -> None:
+    """Verifies that 9-byte MECH_STATUS parses correctly on Sesame Touch 2 Pro (model 26)."""
+    from sesame_ble.sesame_client import (
+        SesameKeypad,
+        SesameAdData,
+        ProductModels,
+        ITEM_MECH_STATUS,
+    )
+    from uuid import UUID
+
+    mock_ad = SesameAdData(model_id=ProductModels.SESAME_TOUCH_2_PRO.value, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))
+    keypad = SesameKeypad(ble_device=None, ad_data=mock_ad)
+
+    # Real payload from live Touch 2 Pro on server.mindyigari:
+    # e8 0c 02 00 00 02 00 00 00
+    # raw_battery=0x0ce8 (3304), cards=2, fingerprints=0, passwords=2, faces=0, palms=0, flags=0
+    payload_9byte = bytes.fromhex("e80c02000002000000")
+    keypad.on_published(ITEM_MECH_STATUS, payload_9byte)
+
+    assert round(keypad.battery_voltage, 3) == 6.608
+    assert keypad.cards_count == 2
+    assert keypad.fingerprints_count == 0
+    assert keypad.passcodes_count == 2
+    assert keypad.faces_count == 0
+    assert keypad.palms_count == 0
+    assert keypad.is_battery_critical is False
+
+    # Also test SESAME_TOUCH_2 (model 25)
+    mock_ad2 = SesameAdData(model_id=ProductModels.SESAME_TOUCH_2.value, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))
+    keypad2 = SesameKeypad(ble_device=None, ad_data=mock_ad2)
+    keypad2.on_published(ITEM_MECH_STATUS, payload_9byte)
+    assert keypad2.cards_count == 2
+    assert keypad2.passcodes_count == 2
+
+
+@pytest.mark.asyncio
+async def test_request_firmware_version() -> None:
+    """Verifies that request_firmware_version requests ITEM_VERSION_TAG and decodes the version string."""
+    from unittest.mock import AsyncMock
+    from sesame_ble.sesame_client import SesameLock, SesameAdData, ProductModels, ITEM_VERSION_TAG
+    from uuid import UUID
+
+    mock_ad = SesameAdData(model_id=ProductModels.SESAME5.value, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))
+    lock = SesameLock(ble_device=None, ad_data=mock_ad)
+    lock.is_logged_in = True
+    lock.send_command = AsyncMock(return_value=b"v3.0.1-git123\x00")
+
+    ver = await lock.request_firmware_version()
+    assert ver == "v3.0.1-git123"
+    assert lock.firmware_version == "v3.0.1-git123"
+    lock.send_command.assert_awaited_once_with(ITEM_VERSION_TAG, b"")
+
+
+@pytest.mark.asyncio
+async def test_enable_dfu() -> None:
+    """Verifies that enable_dfu sends ITEM_ENABLE_DFU without waiting for response."""
+    from unittest.mock import AsyncMock
+    from sesame_ble.sesame_client import SesameLock, SesameAdData, ProductModels, ITEM_ENABLE_DFU
+    from uuid import UUID
+
+    mock_ad = SesameAdData(model_id=ProductModels.SESAME5.value, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))
+    lock = SesameLock(ble_device=None, ad_data=mock_ad)
+    lock.is_logged_in = True
+    lock.send_command = AsyncMock()
+
+    await lock.enable_dfu()
+    lock.send_command.assert_awaited_once_with(ITEM_ENABLE_DFU, b"\x01", wait_for_response=False)
+
+
+
 
 
 

@@ -32,6 +32,12 @@ from .device import (
     ITEM_PALM_FIRST,
     ITEM_PALM_NOTIFY,
     ITEM_PALM_LAST,
+    ITEM_VERSION_TAG,
+    ITEM_ENABLE_DFU,
+    OP_CREATE,
+    OP_READ,
+    OP_RESPONSE,
+    OP_PUBLISH,
 )
 
 
@@ -68,5 +74,11 @@ __all__ = [
     "ITEM_PALM_FIRST",
     "ITEM_PALM_NOTIFY",
     "ITEM_PALM_LAST",
+    "ITEM_VERSION_TAG",
+    "ITEM_ENABLE_DFU",
+    "OP_CREATE",
+    "OP_READ",
+    "OP_RESPONSE",
+    "OP_PUBLISH",
 ]
 

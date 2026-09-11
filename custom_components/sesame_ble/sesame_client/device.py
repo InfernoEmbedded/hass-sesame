@@ -48,6 +48,8 @@ MTU_SIZE = 20
 
 
 # Operation Codes
+OP_CREATE = 0x01
+OP_READ = 0x02
 OP_RESPONSE = 0x07
 OP_PUBLISH = 0x08
 
@@ -380,7 +382,9 @@ class SesameDevice:
     @property
     def address(self) -> str:
         """The BLE MAC address."""
-        return self._ble_device.address
+        if self._ble_device and getattr(self._ble_device, "address", None):
+            return self._ble_device.address
+        return getattr(self, "_address", None) or "00:00:00:00:00:00"
 
     @property
     def mac_address(self) -> str:
@@ -506,7 +510,7 @@ class SesameDevice:
         if not self.is_logged_in:
             return self.firmware_version
         try:
-            res = await self.send_command(ITEM_VERSION_TAG, b"", op_code=OP_READ)
+            res = await self.send_command(ITEM_VERSION_TAG, b"")
             if res:
                 ver_str = res.decode("utf-8", errors="ignore").strip("\x00").strip()
                 if ver_str:
@@ -524,7 +528,7 @@ class SesameDevice:
         if not self.is_logged_in:
             raise Exception("Device is not logged in")
         logger.info("Sending ENABLE_DFU command to device %s", self.address)
-        await self.send_command(ITEM_ENABLE_DFU, b"\x01", op_code=0x03)
+        await self.send_command(ITEM_ENABLE_DFU, b"\x01", wait_for_response=False)
 
     async def sync_time(self) -> None:
         """Synchronizes the device's clock with the host time."""
@@ -642,6 +646,7 @@ class SesameDevice:
         payload: bytes,
         encrypt: bool = True,
         wait_for_response: bool = True,
+        op_code: int | None = None,
     ) -> bytes:
         """Sends a structured request and awaits the result response."""
         async with self._send_lock:
@@ -1092,17 +1097,24 @@ class SesameKeypad(SesameDevice, BaseKeypad):
                 palms = 0
             elif len(payload) == 9:
                 model_id = getattr(getattr(self, "ad_data", None), "model_id", None) or getattr(self, "product_model", None)
-                if model_id in (18, 19, 22, 23, 27, 28, 30, 31):
-
+                if isinstance(model_id, str) and model_id in ProductModels.__members__:
+                    model_id = ProductModels[model_id].value
+                if model_id in (18, 19, 22, 23, 25, 26, 27, 28, 30, 31):
                     raw_battery, cards, fingerprints, passwords, faces, palms, flags = struct.unpack("<HhBBBBB", payload)
                 else:
                     raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhhhB", payload)
                     faces = 0
                     palms = 0
             else:
-                raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhhhB", payload[:9])
-                faces = 0
-                palms = 0
+                model_id = getattr(getattr(self, "ad_data", None), "model_id", None) or getattr(self, "product_model", None)
+                if isinstance(model_id, str) and model_id in ProductModels.__members__:
+                    model_id = ProductModels[model_id].value
+                if model_id in (18, 19, 22, 23, 25, 26, 27, 28, 30, 31):
+                    raw_battery, cards, fingerprints, passwords, faces, palms, flags = struct.unpack("<HhBBBBB", payload[:9])
+                else:
+                    raw_battery, cards, fingerprints, passwords, flags = struct.unpack("<HhhhB", payload[:9])
+                    faces = 0
+                    palms = 0
 
 
             
