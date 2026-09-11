@@ -36,8 +36,6 @@ class SesamePasscodesView(HomeAssistantView):
 
         all_locks = []
         for entry_id, other_wrapper in self.hass.data[DOMAIN].items():
-            if entry_id == "views_registered":
-                continue
             if not is_keypad_model(getattr(other_wrapper, "model_name", None)):
                 device_uuid = ""
                 if hasattr(other_wrapper, "adv_data") and other_wrapper.adv_data:
@@ -129,8 +127,6 @@ class SesamePasscodesView(HomeAssistantView):
                     configured_name = "Unknown Lock"
                     configured_entry_id = None
                     for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
-                        if other_entry_id == "views_registered":
-                            continue
                         if hasattr(other_wrapper, "adv_data") and other_wrapper.adv_data and str(other_wrapper.adv_data.device_uuid) == lock_uuid_str:
                             configured_name = other_wrapper.entry.title
                             configured_entry_id = other_entry_id
@@ -1046,8 +1042,6 @@ class SesameLockHistoryView(HomeAssistantView):
             
         locks = []
         for entry_id, wrapper in self.hass.data[DOMAIN].items():
-            if entry_id == "views_registered":
-                continue
             if not is_keypad_model(getattr(wrapper, "model_name", None)):
                 locks.append(wrapper)
 

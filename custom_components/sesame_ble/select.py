@@ -101,8 +101,6 @@ class SesameTouchPairLockSelect(SesameTouchBaseSelect):
         # Find all locks in Home Assistant not currently paired
         options = [PLACEHOLDER]
         for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
-            if entry_id == "views_registered":
-                continue
             if not hasattr(other_wrapper, "model_name") or is_keypad_model(other_wrapper.model_name):
                 continue
 
@@ -124,8 +122,6 @@ class SesameTouchPairLockSelect(SesameTouchBaseSelect):
         # Resolve wrapper for target lock
         target_wrapper = None
         for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
-            if entry_id == "views_registered":
-                continue
             if hasattr(other_wrapper, "entry") and other_wrapper.entry.title == option:
                 target_wrapper = other_wrapper
                 break
@@ -163,8 +159,6 @@ class SesameTouchUnpairLockSelect(SesameTouchBaseSelect):
             # Resolve name from HA if possible
             resolved_name = None
             for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
-                if entry_id == "views_registered":
-                    continue
                 if str(other_wrapper.adv_data.device_uuid).lower() == lock_uuid_str:
                     resolved_name = other_wrapper.entry.title
                     break
@@ -194,8 +188,6 @@ class SesameTouchUnpairLockSelect(SesameTouchBaseSelect):
             # Match by resolved name
             resolved_name = None
             for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
-                if entry_id == "views_registered":
-                    continue
                 if str(other_wrapper.adv_data.device_uuid).lower() == lock_uuid_str.lower():
                     resolved_name = other_wrapper.entry.title
                     break

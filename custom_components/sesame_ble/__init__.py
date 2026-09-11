@@ -22,6 +22,8 @@ from .sesame_client import (
     SesameLock,
     SesameKeypad,
     BaseKeypad,
+    is_keypad_model,
+    create_sesame_device,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,14 +56,6 @@ def parse_datetime(dt_str: str) -> datetime.datetime | None:
         except ValueError:
             pass
     return None
-
-
-def is_keypad_model(model_name: str | None) -> bool:
-    """Returns True if the model is a keypad (Touch, Face, AI)."""
-    if not model_name:
-        return False
-    name_upper = str(model_name).upper()
-    return any(k in name_upper for k in ("TOUCH", "FACE", "AI", "KEYPAD"))
 
 
 def get_supported_auth_methods(model_name: str | None) -> list[str]:
@@ -118,23 +112,14 @@ class SesameDeviceWrapper:
         self.recently_deleted_cards = {}
         self.recently_deleted_fingerprints = {}
 
-        # Instantiates the correct device type
-        if is_keypad_model(model_name):
-            self.device = SesameKeypad(
-                ble_device,
-                adv_data,
-                secret_key,
-                status_callback=self._handle_status_update,
-                reconnect_attempts=5,
-            )
-        else:
-            self.device = SesameLock(
-                ble_device,
-                adv_data,
-                secret_key,
-                status_callback=self._handle_status_update,
-                reconnect_attempts=5,
-            )
+        # Instantiates the correct device type using library factory
+        self.device = create_sesame_device(
+            ble_device,
+            adv_data,
+            secret_key,
+            status_callback=self._handle_status_update,
+            reconnect_attempts=5,
+        )
 
     def _handle_status_update(self, device: Any, status: Any) -> None:
         """Callback for device mechanical status updates."""
@@ -215,12 +200,10 @@ class SesameDeviceWrapper:
             # Wait for keypad to finish receiving initial publish packets
             await asyncio.sleep(2.0)
             
-            locks = []
-            for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
-                if other_entry_id == "views_registered":
-                    continue
-                if not hasattr(other_wrapper, "model_name") or not is_keypad_model(other_wrapper.model_name):
-                    locks.append(other_wrapper)
+            locks = [
+                other_wrapper for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items()
+                if not hasattr(other_wrapper, "model_name") or not is_keypad_model(other_wrapper.model_name)
+            ]
             
             if not locks:
                 logger.debug("Auto-pairing: No locks registered in sesame_ble integration yet.")
@@ -288,8 +271,6 @@ class SesameDeviceWrapper:
         # Resolve keypad wrapper that is paired to this lock
         keypad_wrapper = None
         for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
-            if other_entry_id == "views_registered":
-                continue
             if hasattr(other_wrapper, "model_name") and is_keypad_model(other_wrapper.model_name):
                 for lock_info in getattr(other_wrapper.device, "paired_locks", []):
                     if lock_info["uuid"].lower() == str(self.adv_data.device_uuid).lower():
@@ -432,8 +413,6 @@ class SesameDeviceWrapper:
                             # Find keypad wrapper paired to this lock
                             keypad_wrapper = None
                             for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
-                                if other_entry_id == "views_registered":
-                                    continue
                                 if hasattr(other_wrapper, "model_name") and is_keypad_model(other_wrapper.model_name):
                                     for lock_info in getattr(other_wrapper.device, "paired_locks", []):
                                         if lock_info["uuid"].lower() == str(self.adv_data.device_uuid).lower():
@@ -526,8 +505,6 @@ class SesameDeviceWrapper:
             # Check for OTP (One-Time Passcode) usage in the paired lock's history
             paired_lock_wrapper = None
             for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
-                if other_entry_id == "views_registered":
-                    continue
                 if not hasattr(other_wrapper, "model_name") or not is_keypad_model(other_wrapper.model_name):
                     lock_uuid_str = str(other_wrapper.adv_data.device_uuid).lower()
                     for lock_info in getattr(self.device, "paired_locks", []):
@@ -687,7 +664,6 @@ class SesameDeviceWrapper:
                 secret_key=secret_bytes,
             )
             qr_url = qr_obj.to_url()
-            image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={parse.quote(qr_url)}"
 
             qr_data_uri = None
             try:
@@ -707,7 +683,7 @@ class SesameDeviceWrapper:
 
             return {
                 "qr_url": qr_url,
-                "qr_image_url": qr_data_uri or image_url,
+                "qr_image_url": qr_data_uri,
                 "qr_data_uri": qr_data_uri,
                 "secret_key": secret_hex,
                 "device_uuid": str(device_uuid),
@@ -816,7 +792,7 @@ def resolve_target_wrapper(hass: HomeAssistant, target_id: str) -> "SesameDevice
     # 4. If not found via device registry, check matching entry_id, unique_id, MAC, UUID, or title
     if not target_wrapper:
         for entry_id, w in hass.data.get(DOMAIN, {}).items():
-            if entry_id == "views_registered" or not hasattr(w, "model_name"):
+            if not hasattr(w, "model_name"):
                 continue
             if entry_id == target_id:
                 target_wrapper = w
@@ -852,7 +828,7 @@ def resolve_target_keypad(hass: HomeAssistant, target_id: str) -> "SesameDeviceW
         # Fallback: check if there is only 1 keypad configured in Home Assistant
         keypads = [
             w for k, w in hass.data.get(DOMAIN, {}).items()
-            if k != "views_registered" and hasattr(w, "model_name") and is_keypad_model(w.model_name)
+            if hasattr(w, "model_name") and is_keypad_model(w.model_name)
         ]
         if len(keypads) == 1:
             return keypads[0]
@@ -864,7 +840,7 @@ def resolve_target_keypad(hass: HomeAssistant, target_id: str) -> "SesameDeviceW
     # The resolved device is a lock (e.g. SESAME5, SESAME6_PRO). Find the keypad paired with this lock.
     lock_uuid = str(getattr(wrapper.adv_data, "device_uuid", "")).lower()
     for entry_id, other_w in hass.data.get(DOMAIN, {}).items():
-        if entry_id == "views_registered" or not hasattr(other_w, "model_name"):
+        if not hasattr(other_w, "model_name"):
             continue
         if is_keypad_model(other_w.model_name):
             for lock_info in getattr(other_w.device, "paired_locks", []):
@@ -874,7 +850,7 @@ def resolve_target_keypad(hass: HomeAssistant, target_id: str) -> "SesameDeviceW
     # If not explicitly paired yet, but there is only 1 keypad in HA, return it as the logical paired keypad
     keypads = [
         w for k, w in hass.data.get(DOMAIN, {}).items()
-        if k != "views_registered" and hasattr(w, "model_name") and is_keypad_model(w.model_name)
+        if hasattr(w, "model_name") and is_keypad_model(w.model_name)
     ]
     if len(keypads) == 1:
         return keypads[0]
@@ -971,9 +947,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = wrapper
 
-    # Register APIs, static path, and custom sidebar panel (once)
-    if "views_registered" not in hass.data[DOMAIN]:
-        hass.data[DOMAIN]["views_registered"] = True
+    views_reg_key = f"{DOMAIN}_views_registered"
+    if views_reg_key not in hass.data:
+        hass.data[views_reg_key] = True
         from .views import (
             SesamePasscodesView,
             SesameCardsView,
