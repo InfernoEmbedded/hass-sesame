@@ -12,11 +12,12 @@ import time
 import base64
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Callable, Self
+from typing import Any, Callable, Self
 from urllib import parse
 from uuid import UUID
+import datetime
 
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner, BLEDevice
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.exc import BleakDeviceNotFoundError
 
@@ -153,28 +154,46 @@ class ProductModels(IntEnum):
     SESAME_FACE_2_PRO_AI = 31
     SESAME6_PRO_SLIDING_DOOR = 32
 
-MODEL_SESAME5 = ProductModels.SESAME5
-MODEL_SESAME5_PRO = ProductModels.SESAME5_PRO
-MODEL_SESAME_TOUCH_PRO = ProductModels.SESAME_TOUCH_PRO
-MODEL_SESAME_TOUCH = ProductModels.SESAME_TOUCH
-MODEL_SESAME5_USA = ProductModels.SESAME5_USA
-MODEL_SESAME_FACE_PRO = ProductModels.SESAME_FACE_PRO
-MODEL_SESAME_FACE = ProductModels.SESAME_FACE
-MODEL_SESAME6 = ProductModels.SESAME6
-MODEL_SESAME6_PRO = ProductModels.SESAME6_PRO
-MODEL_SESAME_FACE_PRO_AI = ProductModels.SESAME_FACE_PRO_AI
-MODEL_SESAME_FACE_AI = ProductModels.SESAME_FACE_AI
-MODEL_SESAME_TOUCH_2 = ProductModels.SESAME_TOUCH_2
-MODEL_SESAME_TOUCH_2_PRO = ProductModels.SESAME_TOUCH_2_PRO
-MODEL_SESAME_FACE_2 = ProductModels.SESAME_FACE_2
-MODEL_SESAME_FACE_2_PRO = ProductModels.SESAME_FACE_2_PRO
-MODEL_SESAME_FACE_2_AI = ProductModels.SESAME_FACE_2_AI
-MODEL_SESAME_FACE_2_PRO_AI = ProductModels.SESAME_FACE_2_PRO_AI
-MODEL_SESAME6_PRO_SLIDING_DOOR = ProductModels.SESAME6_PRO_SLIDING_DOOR
+
+def is_keypad_model(model: str | int | ProductModels | None) -> bool:
+    """Return True if model is a keypad/touch/face device."""
+    if model is None:
+        return False
+    if isinstance(model, ProductModels):
+        name = model.name
+    elif isinstance(model, int):
+        try:
+            name = ProductModels(model).name
+        except ValueError:
+            return False
+    else:
+        name = str(model)
+    name_upper = name.upper()
+    return any(k in name_upper for k in ("TOUCH", "FACE", "AI", "KEYPAD"))
 
 
-
-
+def parse_dt(dt_str: str) -> datetime.datetime | None:
+    """Parses ISO-8601 or common datetime string into a datetime object."""
+    if not dt_str:
+        return None
+    s = dt_str.strip()
+    try:
+        return datetime.datetime.fromisoformat(s)
+    except ValueError:
+        pass
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%d-%m-%Y %H:%M",
+        "%Y-%m-%d",
+    ):
+        try:
+            return datetime.datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    return None
 
 VOLTAGE_LEVELS = (
     5.85, 5.82, 5.79, 5.76, 5.73, 5.70, 5.65, 5.60,
@@ -910,26 +929,6 @@ class BaseKeypad:
         Returns:
             bool: True if any changes were made, False otherwise.
         """
-        import datetime
-        import logging
-
-        _logger = logging.getLogger(__name__)
-
-        def parse_dt(dt_str: str) -> datetime.datetime | None:
-            if not dt_str:
-                return None
-            dt_str = dt_str.strip()
-            try:
-                return datetime.datetime.fromisoformat(dt_str)
-            except ValueError:
-                pass
-            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%d-%m-%Y %H:%M", "%Y-%m-%d"):
-                try:
-                    return datetime.datetime.strptime(dt_str, fmt)
-                except ValueError:
-                    pass
-            return None
-
         now = datetime.datetime.now()
         changed = False
 
@@ -953,7 +952,7 @@ class BaseKeypad:
                     if now.weekday() not in int_days:
                         should_be_active = False
                 except (ValueError, TypeError) as e:
-                    _logger.warning("Invalid days list for passcode '%s': %s", logical_info.get("name"), e)
+                    logger.warning("Invalid days list for passcode '%s': %s", logical_info.get("name"), e)
 
             # 3. Daily time range check
             time_start_str = logical_info.get("time_start", "").strip()
@@ -967,7 +966,7 @@ class BaseKeypad:
                         if current_time < t_start:
                             should_be_active = False
                     except (ValueError, TypeError) as e:
-                        _logger.warning("Invalid time_start '%s' for passcode '%s': %s", time_start_str, logical_info.get("name"), e)
+                        logger.warning("Invalid time_start '%s' for passcode '%s': %s", time_start_str, logical_info.get("name"), e)
                 if time_end_str:
                     try:
                         h, m = map(int, time_end_str.split(":"))
@@ -975,24 +974,24 @@ class BaseKeypad:
                         if current_time >= t_end:
                             should_be_active = False
                     except (ValueError, TypeError) as e:
-                        _logger.warning("Invalid time_end '%s' for passcode '%s': %s", time_end_str, logical_info.get("name"), e)
+                        logger.warning("Invalid time_end '%s' for passcode '%s': %s", time_end_str, logical_info.get("name"), e)
 
             is_physically_active = uid in self.passcodes
 
             if should_be_active and not is_physically_active:
-                _logger.info("Scheduler: Adding passcode '%s' via virtualization", logical_info["name"])
+                logger.info("Scheduler: Adding passcode '%s' via virtualization", logical_info["name"])
                 try:
                     await self.add_passcode(logical_info["code"], logical_info["name"])
                     changed = True
                 except Exception as e:
-                    _logger.error("Failed to add passcode '%s': %s", logical_info["name"], e)
+                    logger.error("Failed to add passcode '%s': %s", logical_info["name"], e)
             elif not should_be_active and is_physically_active:
-                _logger.info("Scheduler: Removing passcode '%s' via virtualization", logical_info["name"])
+                logger.info("Scheduler: Removing passcode '%s' via virtualization", logical_info["name"])
                 try:
                     await self.delete_passcode(uid)
                     changed = True
                 except Exception as e:
-                    _logger.error("Failed to delete passcode '%s': %s", logical_info["name"], e)
+                    logger.error("Failed to delete passcode '%s': %s", logical_info["name"], e)
 
         return changed
 
@@ -1666,3 +1665,83 @@ class SesameKeypad(SesameDevice, BaseKeypad):
         if not self.is_logged_in:
             raise Exception("Device is not logged in")
         await self.send_command(ITEM_REMOVE_SESAME, device_uuid.bytes, encrypt=True)
+
+
+def create_sesame_device(
+    ble_device: Any,
+    ad_data: SesameAdData,
+    secret_key: str | bytes | None = None,
+    **kwargs: Any,
+) -> SesameLock | SesameKeypad:
+    """Factory function to instantiate the appropriate Sesame device class."""
+    if is_keypad_model(ad_data.model_id):
+        return SesameKeypad(ble_device, ad_data, secret_key=secret_key, **kwargs)
+    return SesameLock(ble_device, ad_data, secret_key=secret_key, **kwargs)
+
+
+async def scan_sesame_devices(
+    timeout: float = 5.0,
+    callback: Callable[[BLEDevice, SesameAdData], None] | None = None,
+) -> dict[str, tuple[BLEDevice, SesameAdData]]:
+    """Scan for nearby Sesame BLE devices."""
+    found_devices: dict[str, tuple[BLEDevice, SesameAdData]] = {}
+
+    def detection_callback(device: BLEDevice, advertisement_data: Any) -> None:
+        mfg_dict = advertisement_data.manufacturer_data
+        mfg = get_sesame_mfg_data(mfg_dict) if mfg_dict else None
+        if not mfg:
+            return
+        _, raw_data = mfg
+        try:
+            ad_data = SesameAdData.decode(raw_data)
+            if device.address not in found_devices:
+                found_devices[device.address] = (device, ad_data)
+                if callback:
+                    callback(device, ad_data)
+        except Exception:
+            pass
+
+    scanner = BleakScanner(detection_callback=detection_callback)
+    await scanner.start()
+    await asyncio.sleep(timeout)
+    await scanner.stop()
+    return found_devices
+
+
+async def find_sesame_device(
+    address: str,
+    timeout: float = 5.0,
+) -> tuple[BLEDevice, SesameAdData | None] | None:
+    """Find a specific Sesame BLE device by MAC address."""
+    scanner = BleakScanner()
+    await scanner.start()
+    target_addr = address.upper()
+    ble_device: BLEDevice | None = None
+    ad_data: SesameAdData | None = None
+
+    for _ in range(int(timeout * 10)):
+        for addr, (dev, adv) in scanner.discovered_devices_and_advertisement_data.items():
+            if addr.upper() == target_addr:
+                ble_device = dev
+                if adv.manufacturer_data:
+                    mfg = get_sesame_mfg_data(adv.manufacturer_data)
+                    if mfg:
+                        try:
+                            ad_data = SesameAdData.decode(mfg[1])
+                        except Exception:
+                            pass
+                break
+        if ble_device:
+            break
+        await asyncio.sleep(0.1)
+
+    await scanner.stop()
+
+    if not ble_device:
+        ble_device = await BleakScanner.find_device_by_address(address, timeout=timeout)
+
+    if not ble_device:
+        return None
+
+    return ble_device, ad_data
+
