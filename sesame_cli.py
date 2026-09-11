@@ -83,6 +83,12 @@ async def run_client(args):
             print(f"Failed to parse QR Code URL: {e}", file=sys.stderr)
             return 1
 
+    if args.simulator:
+        if not args.address:
+            args.address = "FD:81:AA:BB:CC:21"
+        if not secret_key and not args.register:
+            secret_key = "00112233445566778899aabbccddeeff"
+
     if not args.address:
         print("Error: --address is required to connect to a device.", file=sys.stderr)
         return 1
@@ -91,13 +97,55 @@ async def run_client(args):
         print("Error: Either --secret, --qr-url, or --register must be provided to authenticate or register.", file=sys.stderr)
         return 1
 
-    print(f"Finding Bluetooth device {args.address}...")
-    result = await find_sesame_device(args.address, timeout=5.0)
-    if not result:
-        print(f"Error: Bluetooth device {args.address} not found.", file=sys.stderr)
-        return 1
+    if args.simulator:
+        from sesame_sim import (
+            SimulatedSesame6Pro,
+            SimulatedSesameTouch2Pro,
+            VirtualBleakClient,
+            VirtualBLEDevice,
+        )
+        import bleak
 
-    ble_device, ad_data = result
+        is_keypad = "26" in (args.address or "")
+        sec_bytes = bytes.fromhex(secret_key) if secret_key else None
+        sim_device = (
+            SimulatedSesameTouch2Pro(secret_key=sec_bytes)
+            if is_keypad
+            else SimulatedSesame6Pro(secret_key=sec_bytes)
+        )
+        secret_key = sim_device.secret_key.hex()
+        model_id = sim_device.product_type
+        ad_data = SesameAdData(
+            model_id=model_id,
+            is_registered=True,
+            device_uuid=UUID("00000000-0000-0000-0000-000000000000"),
+        )
+        ble_device = VirtualBLEDevice(
+            address=args.address or sim_device.ble_address,
+            name=f"SESAME_{sim_device.model_name.upper()}",
+            sim_device=sim_device,
+        )
+
+        try:
+            import bleak_retry_connector
+
+            async def virtual_establish(client_cls, dev, *a, **kw):
+                c = VirtualBleakClient(dev, simulated_device=sim_device, **kw)
+                await c.connect()
+                return c
+
+            bleak_retry_connector.establish_connection = virtual_establish
+        except (ImportError, ModuleNotFoundError):
+            pass
+        bleak.BleakClient = VirtualBleakClient
+    else:
+        print(f"Finding Bluetooth device {args.address}...")
+        result = await find_sesame_device(args.address, timeout=5.0)
+        if not result:
+            print(f"Error: Bluetooth device {args.address} not found.", file=sys.stderr)
+            return 1
+
+        ble_device, ad_data = result
 
     if not ad_data:
         # Fallback to model/UUID from parsed QR URL or defaults
@@ -114,14 +162,19 @@ async def run_client(args):
     # Status callback definition
     def status_callback(device, status):
         print("\n--- Device Status Update Received ---")
+        batt_str = (
+            f"{device.battery_voltage:.3f}V ({device.battery_percentage}%)"
+            if getattr(device, "battery_voltage", None) is not None
+            else "N/A"
+        )
         if isinstance(device, SesameLock):
-            print(f"  Battery Voltage: {device.battery_voltage:.3f}V ({device.battery_percentage}%)")
+            print(f"  Battery Voltage: {batt_str}")
             print(f"  Lock State: {'LOCKED' if device.is_locked else 'UNLOCKED' if device.is_unlocked else 'UNKNOWN'}")
             print(f"  Angle: current={device.current_angle}°, target={device.target_angle}°")
             print(f"  Moving: {device.is_moving}")
             print(f"  Battery Critical: {device.is_battery_critical}")
         elif isinstance(device, SesameKeypad):
-            print(f"  Battery Voltage: {device.battery_voltage:.3f}V ({device.battery_percentage}%)")
+            print(f"  Battery Voltage: {batt_str}")
             print(f"  Passwords Count: {device.passcodes_count}")
             print(f"  Fingerprints Count: {device.fingerprints_count}")
             print(f"  Cards Count: {device.cards_count}")
@@ -226,6 +279,7 @@ async def run_client(args):
 def main():
     parser = argparse.ArgumentParser(description="Standalone CLI to scan and control Sesame BLE devices.")
     parser.add_argument("--scan", action="store_true", help="Scan for nearby Sesame BLE devices")
+    parser.add_argument("--simulator", action="store_true", help="Connect to the simulated hardware environment instead of physical BLE hardware")
     parser.add_argument("--address", help="Bluetooth MAC Address of the Sesame device")
     parser.add_argument("--secret", help="Hex secret key (32 characters)")
     parser.add_argument("--qr-url", help="ssm:// URL to extract model, UUID, and secret key")
