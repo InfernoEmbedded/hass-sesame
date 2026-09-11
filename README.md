@@ -27,11 +27,11 @@ A high-performance, fully local Home Assistant custom integration for controllin
 
 ## Supported Hardware
 
-- 🔑 **Candy House Sesame 5**
-- 🔑 **Candy House Sesame 5 Pro**
-- ⌨️ **Candy House Sesame Touch**
-- ⌨️ **Candy House Sesame Touch Pro**
-
+- 🔑 **Candy House Sesame 5 / 5 Pro / 5 USA**
+- 🔑 **Candy House Sesame 6 / 6 Pro**
+- ⌨️ **Candy House Sesame Touch / Touch Pro**
+- ⌨️ **Candy House Sesame Touch 2 / Touch 2 Pro**
+- 👤 **Candy House Sesame Face / Face Pro / Face AI**
 ---
 
 ## Installation & Components
@@ -247,6 +247,193 @@ action:
 
 ---
 
+## Firmware Downloader
+
+The repository includes a standalone tool, `download_firmware.py`, that automatically queries the official Candy House AWS Cognito & API Gateway cloud endpoints to fetch and unpack the latest Nordic DFU firmware update archives for all 31 supported device models directly into the `firmware/` directory:
+
+```bash
+# Download and unpack firmware for all 31 supported device models
+python download_firmware.py
+
+# Download firmware for specific models (e.g. Sesame 6 Pro and Touch 2 Pro)
+python download_firmware.py --models sesame6_pro sesame_touch_2_pro
+
+# List all available models supported by the Candy House cloud endpoints
+python download_firmware.py --list-models
+
+# Dry run (query available versions without downloading archives)
+python download_firmware.py --dry-run
+```
+
+Each downloaded model is staged in `firmware/<model_name>/` containing:
+- `manifest.json`: Firmware version, target hardware, and Nordic DFU packet metadata.
+- `firmware.bin`: Raw ARM Cortex-M4 binary executed by both physical hardware and the simulation emulator.
+- `firmware.dat`: Signed init packet for Nordic DFU verification.
+- `metadata.json`: Cloud API query response with timestamps and asset hashes.
+
+> [!NOTE]
+> The `firmware/` directory is gitignored by default so binary artifacts are never committed to version control. Downloaded binaries are directly consumed by the simulation environment (`sesame_sim`) to run authentic Candy House firmware in memory.
+
+---
+
+## Sesame Hardware Simulation Environment
+
+You can simulate Sesame devices without any physical hardware using the integrated simulation framework (`sesame_sim`). It runs the authentic Candy House firmware binaries inside an ARM Cortex-M4 **Unicorn Engine** emulator with an in-memory BLE bridge:
+
+### 1. Launch the Interactive Web GUI
+```bash
+python -m sesame_sim
+```
+Open **http://127.0.0.1:8088** in your browser to interact with the simulated hardware:
+
+**Interactive Features:**
+- 🔄 **Real-Time Rotary Motor Dial**: Visual SVG thumbturn showing real motor position versus target angle, smooth CSS rotation animations, and manual drag-to-turn controls.
+- 🔢 **Backlit 3x4 Keypad**: Functional numeric matrix with audio feedback, backspace (`*`), and enter (`#`) validating PINs against the emulated database.
+- 🔊 **Synthesized Audio & Visual Buzzer**: Realistic piezo buzzer tones and mechanical click sounds synthesized via the Web Audio API.
+- 🚦 **Tri-Color Status LEDs**: Real-time Red/Blue/Green status indicators replicating physical hardware behavior.
+- 👆 **Biometric & NFC Simulation**: One-click fingerprint touch and NFC/RFID card tap emulation.
+- 🔗 **Cross-Device Interactivity**: Entering a valid PIN, scanning an enrolled card, or touching a matched fingerprint automatically drives the linked Sesame 6 Pro lock motor to unlock.
+
+---
+
+## Testing Against the Hardware Simulator
+
+The simulation environment allows rapid end-to-end testing without Bluetooth dongles, mobile apps, or physical hardware.
+
+### 1. Automated Test Suite (Pytest)
+Run rigorous automated unit and integration tests directly against the emulated firmware:
+
+```bash
+# Run all hardware simulation tests (33 tests)
+pytest tests/test_simulated_lock_rigorous.py tests/test_simulated_keypad_rigorous.py tests/test_simulation_emulator.py tests/test_virtual_ble_bridge.py -v
+
+# Test Sesame 6 Pro lock operations (handshake, session key validation, motor animation, thumbturn, history log sync):
+pytest tests/test_simulated_lock_rigorous.py -v
+
+# Test Touch 2 Pro keypad operations (passcode CRUD, fingerprint/card auth, linked lock motor actuation):
+pytest tests/test_simulated_keypad_rigorous.py -v
+
+# Test low-level ARM Cortex-M4 Unicorn emulation and OnMicro ROM HLE dispatch:
+pytest tests/test_simulation_emulator.py -v
+
+# Test in-memory Bleak GATT client/server loopback transport:
+pytest tests/test_virtual_ble_bridge.py -v
+```
+
+### 2. Standalone CLI Testing (`sesame_cli.py --simulator`)
+Use the `--simulator` flag to execute commands against simulated hardware running authentic firmware in memory:
+
+```bash
+# Query simulated Sesame 6 Pro status
+python sesame_cli.py --simulator --address FD:81:AA:BB:CC:21 --status
+
+# Unlock simulated Sesame 6 Pro (animates motor from 0° to 90°)
+python sesame_cli.py --simulator --address FD:81:AA:BB:CC:21 --unlock
+
+# Lock simulated Sesame 6 Pro (animates motor back to 0°)
+python sesame_cli.py --simulator --address FD:81:AA:BB:CC:21 --lock
+
+# Query simulated Touch 2 Pro keypad status
+python sesame_cli.py --simulator --address FD:81:AA:BB:CC:26 --status
+
+# Retrieve and sync all enrolled passcodes on simulated keypad
+python sesame_cli.py --simulator --address FD:81:AA:BB:CC:26 --get-passcodes
+
+# Add a new passcode to the simulated keypad
+python sesame_cli.py --simulator --address FD:81:AA:BB:CC:26 --add-passcode "123456" "Guest PIN"
+
+# Delete a passcode from the simulated keypad
+python sesame_cli.py --simulator --address FD:81:AA:BB:CC:26 --delete-passcode "123456"
+```
+
+---
+
+## Testing Against Real Physical Hardware Over BLE
+
+To test against physical Sesame locks and keypads using your host machine's Bluetooth adapter:
+
+### 1. Prerequisites
+- **Bluetooth Adapter**: BLE 4.0 or higher adapter (internal or USB dongle).
+- **Linux Permissions**: Ensure the `bluetooth` daemon is running (`systemctl status bluetooth`). Ensure your user has permissions to access the Bluetooth adapter (member of `bluetooth` group or run with appropriate privileges).
+- **Wake Device**: Ensure batteries are installed in your physical Sesame lock or keypad and that it is within range.
+
+### 2. Discover Nearby Hardware
+Scan for physical Sesame devices advertising over BLE:
+
+```bash
+python sesame_cli.py --scan
+```
+*Output displays device names, BLE MAC addresses, model identifiers, and registration status.*
+
+### 3. Query Real Hardware Status
+Connect, perform session key negotiation, and read live telemetry (battery voltage, motor angle, credential counts):
+
+```bash
+# Using 32-character Hex Secret Key:
+python sesame_cli.py --address "DE:AD:BE:EF:01:02" --secret "00112233445566778899aabbccddeeff" --status
+
+# Or using the official Sesame App QR Code URL:
+python sesame_cli.py --address "DE:AD:BE:EF:01:02" --qr-url "ssm://UI?uuid=...&key=...&m=..." --status
+```
+
+### 4. Test Lock & Unlock on Physical Lock
+Control the physical motor:
+
+```bash
+# Unlock physical lock
+python sesame_cli.py --address "DE:AD:BE:EF:01:02" --secret "your_32char_hex_secret" --unlock
+
+# Lock physical lock
+python sesame_cli.py --address "DE:AD:BE:EF:01:02" --secret "your_32char_hex_secret" --lock
+```
+
+### 5. Test Passcode Management on Physical Keypad
+Sync, add, or delete PINs on physical Sesame Touch / Touch Pro / Touch 2 keypads:
+
+```bash
+# Sync and list all passcodes stored on the physical keypad
+python sesame_cli.py --address "DE:AD:BE:EF:03:04" --secret "your_32char_hex_secret" --get-passcodes
+
+# Add a new test passcode to the physical keypad
+python sesame_cli.py --address "DE:AD:BE:EF:03:04" --secret "your_32char_hex_secret" --add-passcode "987654" "TestPIN"
+
+# Delete the passcode by PIN or Hex ID
+python sesame_cli.py --address "DE:AD:BE:EF:03:04" --secret "your_32char_hex_secret" --delete-passcode "987654"
+```
+
+### 6. Register a Factory-Reset Device
+To register a factory-fresh or reset device and retrieve the generated secret key:
+
+```bash
+python sesame_cli.py --address "DE:AD:BE:EF:01:02" --register
+```
+
+---
+
+## Running the Automated Test Suite
+
+The repository contains an extensive automated test suite covering protocol compatibility, cryptography, Home Assistant config flows, entity platforms, hardware simulation, and Nordic DFU firmware downloader logic:
+
+```bash
+# Run the complete test suite (132 tests)
+pytest -v
+
+# Run hardware simulation tests
+pytest tests/test_simulated_lock_rigorous.py tests/test_simulated_keypad_rigorous.py tests/test_simulation_emulator.py tests/test_virtual_ble_bridge.py -v
+
+# Run Home Assistant integration and config flow tests
+pytest tests/test_hass_integration.py tests/test_config_flow.py -v
+
+# Run protocol and crypto compatibility tests
+pytest tests/test_protocol_compatibility.py tests/test_crypto_compatibility.py -v
+
+# Run firmware downloader tests
+pytest tests/test_download_firmware.py -v
+```
+
+---
+
 ## License
 
 This project is licensed under the **GNU General Public License v3.0**. See the [LICENSE](LICENSE) file for the full text.
+
