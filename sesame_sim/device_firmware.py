@@ -755,6 +755,26 @@ class SimulatedSesameTouch(SimulatedSesameKeypad):
         )
 
 
+class SimulatedSesameTouchPro(SimulatedSesameKeypad):
+    """Simulates Sesame Touch Pro Keypad running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame_touch_pro/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:09",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame_touch_pro",
+            product_type=9,
+            firmware_path=firmware_path,
+            base_address=0x00403000,
+            ble_address=ble_address,
+            firmware_version="3.0-9-e877d5",
+            secret_key=secret_key,
+        )
+
+
 class SimulatedSesameLock(SimulatedFirmwareDevice):
     """Base class for Sesame Lock devices running authentic firmware."""
 
