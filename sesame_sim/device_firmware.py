@@ -855,6 +855,26 @@ class SimulatedSesameFaceAI(SimulatedSesameKeypad):
         )
 
 
+class SimulatedSesameFaceProAI(SimulatedSesameKeypad):
+    """Simulates Sesame Face Pro AI Keypad running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame_face_pro_ai/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:22",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame_face_pro_ai",
+            product_type=22,
+            firmware_path=firmware_path,
+            base_address=0x00403000,
+            ble_address=ble_address,
+            firmware_version="3.0-22-e877d5",
+            secret_key=secret_key,
+        )
+
+
 class SimulatedSesameLock(SimulatedFirmwareDevice):
     """Base class for Sesame Lock devices running authentic firmware."""
 
