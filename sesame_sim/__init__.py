@@ -18,6 +18,7 @@ from .device_firmware import (
     SimulatedSesameTouch2,
     SimulatedSesameTouch2Pro,
     SimulatedSesameFace,
+    SimulatedSesameFacePro,
 )
 from .ble_bridge import VirtualBleakClient, VirtualBleakScanner, VirtualBLEDevice
 
@@ -39,6 +40,7 @@ __all__ = [
     "SimulatedSesameTouch2",
     "SimulatedSesameTouch2Pro",
     "SimulatedSesameFace",
+    "SimulatedSesameFacePro",
     "VirtualBleakClient",
     "VirtualBleakScanner",
     "VirtualBLEDevice",
