@@ -1001,3 +1001,23 @@ class SimulatedSesame6(SimulatedSesameLock):
             firmware_version="3.0-20-956bb2",
             secret_key=secret_key,
         )
+
+
+class SimulatedSesame6ProSlidingDoor(SimulatedSesameLock):
+    """Simulates Sesame 6 Pro Sliding Door Lock running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame6_pro_sliding_door/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:32",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame6_pro_sliding_door",
+            product_type=32,
+            firmware_path=firmware_path,
+            base_address=0x00404000,
+            ble_address=ble_address,
+            firmware_version="3.0-21-956bb2",
+            secret_key=secret_key,
+        )
