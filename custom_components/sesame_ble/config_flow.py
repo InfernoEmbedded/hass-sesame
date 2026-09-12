@@ -57,6 +57,7 @@ def _log_ble_packet_discovery(hass, step_name: str) -> None:
 
 FRIENDLY_MODELS = {
     "SESAME5": "5",
+    "SESAME_BIKE2": "Bike 2",
     "SESAME5_PRO": "5 Pro",
     "SESAME_TOUCH_PRO": "Touch Pro",
     "SESAME_TOUCH": "Touch",

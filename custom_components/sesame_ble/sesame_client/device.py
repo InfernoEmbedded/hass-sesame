@@ -136,6 +136,7 @@ ITEM_PALM_MODE_DELETE_NOTIFY = 193
 # Product Models
 class ProductModels(IntEnum):
     SESAME5 = 5
+    SESAME_BIKE2 = 6
     SESAME5_PRO = 7
     SESAME_TOUCH_PRO = 9
     SESAME_TOUCH = 10

@@ -105,6 +105,7 @@ async def run_client(args):
             SimulatedSesame5,
             SimulatedSesame5Pro,
             SimulatedSesame5USA,
+            SimulatedSesameBike2,
             SimulatedSesameTouch2Pro,
             VirtualBleakClient,
             VirtualBLEDevice,
@@ -117,9 +118,12 @@ async def run_client(args):
         is_sesame5_usa = "16" in (args.address or "")
         is_sesame6 = "20" in (args.address or "")
         is_sesame6_sliding = "32" in (args.address or "")
+        is_bike2 = "06" in (args.address or "")
         sec_bytes = bytes.fromhex(secret_key) if secret_key else None
         if is_keypad:
             sim_device = SimulatedSesameTouch2Pro(secret_key=sec_bytes)
+        elif is_bike2:
+            sim_device = SimulatedSesameBike2(secret_key=sec_bytes)
         elif is_sesame6_sliding:
             sim_device = SimulatedSesame6ProSlidingDoor(secret_key=sec_bytes)
         elif is_sesame6:
