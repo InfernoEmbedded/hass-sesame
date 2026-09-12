@@ -115,11 +115,13 @@ async def run_client(args):
             SimulatedSesameFacePro,
             SimulatedSesameFaceAI,
             SimulatedSesameFaceProAI,
+            SimulatedSesameFace2,
             VirtualBleakClient,
             VirtualBLEDevice,
         )
         import bleak
 
+        is_face_2 = "27" in (args.address or "")
         is_face_pro_ai = "22" in (args.address or "")
         is_face_ai = "23" in (args.address or "")
         is_face_pro = "18" in (args.address or "")
@@ -136,7 +138,9 @@ async def run_client(args):
         is_bike2 = "06" in (args.address or "")
         is_bike3 = "33" in (args.address or "")
         sec_bytes = bytes.fromhex(secret_key) if secret_key else None
-        if is_face_pro_ai:
+        if is_face_2:
+            sim_device = SimulatedSesameFace2(secret_key=sec_bytes)
+        elif is_face_pro_ai:
             sim_device = SimulatedSesameFaceProAI(secret_key=sec_bytes)
         elif is_face_ai:
             sim_device = SimulatedSesameFaceAI(secret_key=sec_bytes)
