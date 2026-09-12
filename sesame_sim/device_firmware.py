@@ -646,13 +646,17 @@ class SimulatedSesameTouch2Pro(SimulatedFirmwareDevice):
         return s
 
 
-class SimulatedSesame6Pro(SimulatedFirmwareDevice):
-    """Simulates Sesame 6 Pro Lock running authentic firmware."""
+class SimulatedSesameLock(SimulatedFirmwareDevice):
+    """Base class for Sesame Lock devices running authentic firmware."""
 
     def __init__(
         self,
-        firmware_path: str = "firmware/sesame6_pro/firmware.bin",
-        ble_address: str = "FD:81:AA:BB:CC:21",
+        model_name: str,
+        product_type: int,
+        firmware_path: str,
+        base_address: int,
+        ble_address: str,
+        firmware_version: str,
         secret_key: bytes | None = None,
     ) -> None:
         self.current_angle: float = 0.0
@@ -667,18 +671,19 @@ class SimulatedSesame6Pro(SimulatedFirmwareDevice):
         self.ops_lock_second: int = 0
         self.history_records: list[bytes] = []
         self._next_history_id: int = 1
+        self._expected_firmware_version = firmware_version
 
         super().__init__(
-            model_name="sesame6_pro",
-            product_type=21,
+            model_name=model_name,
+            product_type=product_type,
             firmware_path=firmware_path,
-            base_address=0x00404000,
+            base_address=base_address,
             ble_address=ble_address,
             secret_key=secret_key,
         )
 
     def _setup_hooks(self) -> None:
-        self.firmware_version = "3.0-21-956bb2"
+        self.firmware_version = self._expected_firmware_version
 
     def _add_history_record(self, history_type: int, tag_name: str = "Client") -> None:
         name_bytes = tag_name.encode("utf-8")[:20]
@@ -828,6 +833,8 @@ class SimulatedSesame6Pro(SimulatedFirmwareDevice):
                 self.auto_lock_second = struct.unpack("<H", body[:2])[0]
             resp = bytes([0x07, 11, 0x00])
             self.emit_notification(RX_CHAR_UUID, resp, encrypt=is_encrypted)
+            setting_payload = struct.pack("<hhH", int(self.locked_angle), int(self.unlocked_angle), self.auto_lock_second)
+            self.emit_notification(RX_CHAR_UUID, bytes([0x08, 0x50]) + setting_payload, encrypt=is_encrypted)
 
         elif item_code == 92:  # ITEM_OPS_TIMER_SETTING
             if len(body) >= 2:
@@ -894,3 +901,43 @@ class SimulatedSesame6Pro(SimulatedFirmwareDevice):
             "history_count": len(self.history_records),
         })
         return s
+
+
+class SimulatedSesame6Pro(SimulatedSesameLock):
+    """Simulates Sesame 6 Pro Lock running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame6_pro/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:21",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame6_pro",
+            product_type=21,
+            firmware_path=firmware_path,
+            base_address=0x00404000,
+            ble_address=ble_address,
+            firmware_version="3.0-21-956bb2",
+            secret_key=secret_key,
+        )
+
+
+class SimulatedSesame5(SimulatedSesameLock):
+    """Simulates Sesame 5 Lock running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame5/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:05",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame5",
+            product_type=5,
+            firmware_path=firmware_path,
+            base_address=0x00403000,
+            ble_address=ble_address,
+            firmware_version="3.0-5-3bfc1c",
+            secret_key=secret_key,
+        )

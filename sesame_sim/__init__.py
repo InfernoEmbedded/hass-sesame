@@ -3,7 +3,9 @@
 from .mcu import CortexM4Emulator
 from .device_firmware import (
     SimulatedFirmwareDevice,
+    SimulatedSesameLock,
     SimulatedSesame6Pro,
+    SimulatedSesame5,
     SimulatedSesameTouch2Pro,
 )
 from .ble_bridge import VirtualBleakClient, VirtualBleakScanner, VirtualBLEDevice
@@ -11,9 +13,12 @@ from .ble_bridge import VirtualBleakClient, VirtualBleakScanner, VirtualBLEDevic
 __all__ = [
     "CortexM4Emulator",
     "SimulatedFirmwareDevice",
+    "SimulatedSesameLock",
     "SimulatedSesame6Pro",
+    "SimulatedSesame5",
     "SimulatedSesameTouch2Pro",
     "VirtualBleakClient",
     "VirtualBleakScanner",
     "VirtualBLEDevice",
 ]
+
