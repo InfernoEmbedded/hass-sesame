@@ -164,6 +164,8 @@ class SesameDeviceWrapper:
             "SESAME5_PRO": "v3.0",
             "SESAME BIKE 2": "v3.0",
             "SESAME_BIKE2": "v3.0",
+            "SESAME BIKE 3": "v3.0",
+            "SESAME_BIKE3": "v3.0",
             "SESAME 6": "v1.2",
             "SESAME6": "v1.2",
             "SESAME 6 PRO": "v1.2",

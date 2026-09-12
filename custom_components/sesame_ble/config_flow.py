@@ -75,6 +75,7 @@ FRIENDLY_MODELS = {
     "SESAME_FACE_2_AI": "Face 2 AI",
     "SESAME_FACE_2_PRO_AI": "Face 2 Pro AI",
     "SESAME6_PRO_SLIDING_DOOR": "6 Pro Sliding Door",
+    "SESAME_BIKE3": "Bike 3",
 }
 
 

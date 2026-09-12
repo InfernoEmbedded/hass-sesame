@@ -154,6 +154,7 @@ class ProductModels(IntEnum):
     SESAME_FACE_2_AI = 30
     SESAME_FACE_2_PRO_AI = 31
     SESAME6_PRO_SLIDING_DOOR = 32
+    SESAME_BIKE3 = 33
 
 
 def is_keypad_model(model: str | int | ProductModels | None) -> bool:

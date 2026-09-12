@@ -1041,3 +1041,23 @@ class SimulatedSesameBike2(SimulatedSesameLock):
             firmware_version="3.0-6-3bfc1c",
             secret_key=secret_key,
         )
+
+
+class SimulatedSesameBike3(SimulatedSesameLock):
+    """Simulates Sesame Bike 3 / Cycle 3 Lock running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame_bike3/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:33",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame_bike3",
+            product_type=33,
+            firmware_path=firmware_path,
+            base_address=0x00404000,
+            ble_address=ble_address,
+            firmware_version="3.0-33-d96ebc",
+            secret_key=secret_key,
+        )
