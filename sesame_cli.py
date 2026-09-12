@@ -107,12 +107,14 @@ async def run_client(args):
             SimulatedSesame5USA,
             SimulatedSesameBike2,
             SimulatedSesameBike3,
+            SimulatedSesameTouch,
             SimulatedSesameTouch2Pro,
             VirtualBleakClient,
             VirtualBLEDevice,
         )
         import bleak
 
+        is_touch = "10" in (args.address or "")
         is_keypad = "26" in (args.address or "")
         is_sesame5 = "05" in (args.address or "")
         is_sesame5_pro = "07" in (args.address or "")
@@ -122,7 +124,9 @@ async def run_client(args):
         is_bike2 = "06" in (args.address or "")
         is_bike3 = "33" in (args.address or "")
         sec_bytes = bytes.fromhex(secret_key) if secret_key else None
-        if is_keypad:
+        if is_touch:
+            sim_device = SimulatedSesameTouch(secret_key=sec_bytes)
+        elif is_keypad:
             sim_device = SimulatedSesameTouch2Pro(secret_key=sec_bytes)
         elif is_bike3:
             sim_device = SimulatedSesameBike3(secret_key=sec_bytes)

@@ -197,13 +197,17 @@ class SimulatedFirmwareDevice:
         raise NotImplementedError
 
 
-class SimulatedSesameTouch2Pro(SimulatedFirmwareDevice):
-    """Simulates Sesame Touch 2 Pro Keypad running authentic firmware."""
+class SimulatedSesameKeypad(SimulatedFirmwareDevice):
+    """Base class for Sesame Keypad devices running authentic firmware."""
 
     def __init__(
         self,
-        firmware_path: str = "firmware/sesame_touch_2_pro/firmware.bin",
-        ble_address: str = "FD:81:AA:BB:CC:26",
+        model_name: str,
+        product_type: int,
+        firmware_path: str,
+        base_address: int,
+        ble_address: str,
+        firmware_version: str,
         secret_key: bytes | None = None,
     ) -> None:
         self.keypad_input = ""
@@ -214,73 +218,72 @@ class SimulatedSesameTouch2Pro(SimulatedFirmwareDevice):
         self.registered_passcodes: list[dict] = []
         self.registered_cards: list[dict] = []
         self.registered_fingerprints: list[dict] = []
+        self.registered_faces: list[dict] = []
         self.passcode_registration_mode = False
         self.card_registration_mode = False
         self.fingerprint_registration_mode = False
+        self.face_registration_mode = False
         self.paired_locks: list[dict] = []
-        self.linked_lock: "SimulatedSesame6Pro | None" = None
+        self.linked_lock: "SimulatedSesameLock | None" = None
+        self._expected_firmware_version = firmware_version
 
         super().__init__(
-            model_name="sesame_touch_2_pro",
-            product_type=26,
+            model_name=model_name,
+            product_type=product_type,
             firmware_path=firmware_path,
-            base_address=0x00403000,
+            base_address=base_address,
             ble_address=ble_address,
             secret_key=secret_key,
         )
 
     def _setup_hooks(self) -> None:
-        # Hook FUN_00428c90 (connection check) to report connection status
-        def hook_is_connected(uc, address, size, user_data):
-            uc.reg_write(1, 1 if self.is_connected else 0)  # R0
-            lr = uc.reg_read(14)  # LR
-            uc.reg_write(15, lr)  # PC
+        if self.model_name in ("sesame_touch_2_pro", "sesame_touch_pro"):
+            # Hook FUN_00428c90 (connection check) to report connection status
+            def hook_is_connected(uc, address, size, user_data):
+                uc.reg_write(1, 1 if self.is_connected else 0)  # R0
+                lr = uc.reg_read(14)  # LR
+                uc.reg_write(15, lr)  # PC
 
-        self.mcu.uc.hook_add(
-            1,  # UC_HOOK_CODE
-            hook_is_connected,
-            begin=0x00428C90,
-            end=0x00428C92,
-        )
+            self.mcu.uc.hook_add(
+                1,  # UC_HOOK_CODE
+                hook_is_connected,
+                begin=0x00428C90,
+                end=0x00428C92,
+            )
 
-        # Hook FUN_0042cf84 (BLE notification transmit)
-        def hook_tx(uc, address, size, user_data):
-            r2 = uc.reg_read(2)  # data ptr
-            r3 = uc.reg_read(3)  # len
-            if 0 < r3 < 256:
-                try:
-                    payload = self.mcu.mem_read(r2, r3)
-                    logger.debug("[%s] Firmware generated BLE notification: %s", self.model_name, payload.hex())
-                    # Notifications after login are encrypted if client is logged in
-                    self.emit_notification(RX_CHAR_UUID, payload, encrypt=self.is_logged_in)
-                except Exception as err:
-                    logger.error("Error reading TX buffer: %s", err)
+            # Hook FUN_0042cf84 (BLE notification transmit)
+            def hook_tx(uc, address, size, user_data):
+                r2 = uc.reg_read(2)  # data ptr
+                r3 = uc.reg_read(3)  # len
+                if 0 < r3 < 256:
+                    try:
+                        payload = self.mcu.mem_read(r2, r3)
+                        logger.debug("[%s] Firmware generated BLE notification: %s", self.model_name, payload.hex())
+                        self.emit_notification(RX_CHAR_UUID, payload, encrypt=self.is_logged_in)
+                    except Exception as err:
+                        logger.error("Error reading TX buffer: %s", err)
 
-        self.mcu.uc.hook_add(
-            1,  # UC_HOOK_CODE
-            hook_tx,
-            begin=0x0042CF84,
-            end=0x0042CF86,
-        )
+            self.mcu.uc.hook_add(
+                1,  # UC_HOOK_CODE
+                hook_tx,
+                begin=0x0042CF84,
+                end=0x0042CF86,
+            )
 
-        # Hook buzzer routine FUN_004255ac
-        def hook_buzzer(uc, address, size, user_data):
-            duration = uc.reg_read(0)
-            logger.info("[%s] Buzzer triggered for %d ms", self.model_name, duration)
-            self.trigger_buzzer(duration)
+            # Hook buzzer routine FUN_004255ac
+            def hook_buzzer(uc, address, size, user_data):
+                duration = uc.reg_read(0)
+                logger.info("[%s] Buzzer triggered for %d ms", self.model_name, duration)
+                self.trigger_buzzer(duration)
 
-        self.mcu.uc.hook_add(
-            1,  # UC_HOOK_CODE
-            hook_buzzer,
-            begin=0x004255AC,
-            end=0x004255AE,
-        )
+            self.mcu.uc.hook_add(
+                1,  # UC_HOOK_CODE
+                hook_buzzer,
+                begin=0x004255AC,
+                end=0x004255AE,
+            )
 
-        # Retrieve firmware version from firmware memory
-        try:
-            self.firmware_version = "3.0-9-e877d5"
-        except Exception:
-            pass
+        self.firmware_version = self._expected_firmware_version
 
     def trigger_buzzer(self, duration_ms: int = 100) -> None:
         self.buzzer_active = True
@@ -296,16 +299,26 @@ class SimulatedSesameTouch2Pro(SimulatedFirmwareDevice):
             pass
 
     def _emit_mech_status(self) -> None:
-        keypad_mech_payload = struct.pack(
-            "<HhBBBBB",
-            3000,
-            len(self.registered_cards),
-            len(self.registered_fingerprints),
-            len(self.registered_passcodes),
-            0,
-            0,
-            0,
-        )
+        if self.product_type in (18, 19, 22, 23, 25, 26, 27, 28, 30, 31):
+            keypad_mech_payload = struct.pack(
+                "<HhBBBBB",
+                3000,
+                len(self.registered_cards),
+                len(self.registered_fingerprints),
+                len(self.registered_passcodes),
+                len(self.registered_faces),
+                0,
+                0,
+            )
+        else:
+            keypad_mech_payload = struct.pack(
+                "<HhhhB",
+                3000,
+                len(self.registered_cards),
+                len(self.registered_fingerprints),
+                len(self.registered_passcodes),
+                0,
+            )
         mech_resp = bytes([0x08, 0x51]) + keypad_mech_payload
         self.emit_notification(RX_CHAR_UUID, mech_resp, encrypt=self.is_logged_in)
 
@@ -531,11 +544,50 @@ class SimulatedSesameTouch2Pro(SimulatedFirmwareDevice):
                 self.emit_notification(RX_CHAR_UUID, resp, encrypt=is_encrypted)
                 self._emit_paired_locks_list()
 
-        # Prepare message buffer in SRAM at 0x20010000 and run firmware dispatcher
+        elif item_code == 155:  # ITEM_FACE_DELETE
+            face_id = body
+            self.registered_faces = [
+                f for f in self.registered_faces
+                if f.get("id_bytes") != face_id and f.get("id") != face_id.hex()
+            ]
+            resp = bytes([0x07, 155, 0x00])
+            self.emit_notification(RX_CHAR_UUID, resp, encrypt=is_encrypted)
+            self._emit_mech_status()
+
+        elif item_code == 154:  # ITEM_FACE_CHANGE
+            if len(body) >= 2:
+                id_len = body[0]
+                face_id = body[1 : 1 + id_len]
+                name = body[1 + id_len:].decode("utf-8", "replace")
+                for f in self.registered_faces:
+                    if f.get("id_bytes") == face_id or f.get("id") == face_id.hex():
+                        f["name"] = name
+                resp = bytes([0x07, 154, 0x00])
+                self.emit_notification(RX_CHAR_UUID, resp, encrypt=is_encrypted)
+
+        elif item_code == 156:  # ITEM_FACE_GET
+            self.emit_notification(RX_CHAR_UUID, bytes([0x08, 159]), encrypt=is_encrypted)  # ITEM_FACE_FIRST
+            for f in self.registered_faces:
+                f_id = f["id_bytes"]
+                f_name = f["name"].encode("utf-8")
+                notify_chunk = bytes([f.get("type", 0), len(f_id)]) + f_id + bytes([len(f_name)]) + f_name
+                self.emit_notification(RX_CHAR_UUID, bytes([0x08, 157]) + notify_chunk, encrypt=is_encrypted)  # ITEM_FACE_NOTIFY
+            self.emit_notification(RX_CHAR_UUID, bytes([0x08, 158]), encrypt=is_encrypted)  # ITEM_FACE_LAST
+
+        elif item_code == 161:  # ITEM_FACE_MODE_SET
+            self.face_registration_mode = (body[0] == 0x01 if body else False)
+            resp = bytes([0x07, 161, 0x00])
+            self.emit_notification(RX_CHAR_UUID, resp, encrypt=is_encrypted)
+
+        # Prepare message buffer in SRAM at 0x20010000 and run firmware dispatcher if applicable
         msg_buf = 0x20010000
         header = struct.pack("<BBH", 0, 0, len(body))
         self.mcu.mem_write(msg_buf, header + body)
-        self.mcu.call(0x00429D5C, 0, msg_buf, 0, item_code)
+        if self.model_name in ("sesame_touch_2_pro", "sesame_touch_pro"):
+            try:
+                self.mcu.call(0x00429D5C, 0, msg_buf, 0, item_code)
+            except Exception:
+                pass
         self.notify_state_changed()
 
     def press_key(self, key: str) -> None:
@@ -627,6 +679,20 @@ class SimulatedSesameTouch2Pro(SimulatedFirmwareDevice):
         self._schedule_call(1.5, self._clear_leds)
         self.notify_state_changed()
 
+    def scan_face(self, matched: bool = True) -> None:
+        """Simulates biometric face recognition."""
+        logger.info("[%s] Face scanned (match=%s)", self.model_name, matched)
+        if matched:
+            self.led_green = True
+            self.trigger_buzzer(100)
+            if self.linked_lock:
+                self.linked_lock.unlock(history_name="Face Recognition")
+        else:
+            self.led_red = True
+            self.trigger_buzzer(80)
+        self._schedule_call(1.5, self._clear_leds)
+        self.notify_state_changed()
+
     def _clear_leds(self) -> None:
         self.led_red = False
         self.led_blue = False
@@ -642,8 +708,51 @@ class SimulatedSesameTouch2Pro(SimulatedFirmwareDevice):
             "led_blue": self.led_blue,
             "led_green": self.led_green,
             "passcode_count": len(self.registered_passcodes),
+            "card_count": len(self.registered_cards),
+            "fingerprint_count": len(self.registered_fingerprints),
+            "face_count": len(self.registered_faces),
         })
         return s
+
+
+class SimulatedSesameTouch2Pro(SimulatedSesameKeypad):
+    """Simulates Sesame Touch 2 Pro Keypad running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame_touch_2_pro/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:26",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame_touch_2_pro",
+            product_type=26,
+            firmware_path=firmware_path,
+            base_address=0x00403000,
+            ble_address=ble_address,
+            firmware_version="3.0-9-e877d5",
+            secret_key=secret_key,
+        )
+
+
+class SimulatedSesameTouch(SimulatedSesameKeypad):
+    """Simulates Sesame Touch Keypad running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame_touch/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:10",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame_touch",
+            product_type=10,
+            firmware_path=firmware_path,
+            base_address=0x00403000,
+            ble_address=ble_address,
+            firmware_version="3.0-10-e877d5",
+            secret_key=secret_key,
+        )
 
 
 class SimulatedSesameLock(SimulatedFirmwareDevice):
