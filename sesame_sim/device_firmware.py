@@ -961,3 +961,23 @@ class SimulatedSesame5Pro(SimulatedSesameLock):
             firmware_version="3.0-7-3bfc1c",
             secret_key=secret_key,
         )
+
+
+class SimulatedSesame5USA(SimulatedSesameLock):
+    """Simulates Sesame 5 USA Lock running authentic firmware."""
+
+    def __init__(
+        self,
+        firmware_path: str = "firmware/sesame5_usa/firmware.bin",
+        ble_address: str = "FD:81:AA:BB:CC:16",
+        secret_key: bytes | None = None,
+    ) -> None:
+        super().__init__(
+            model_name="sesame5_usa",
+            product_type=16,
+            firmware_path=firmware_path,
+            base_address=0x00403000,
+            ble_address=ble_address,
+            firmware_version="3.0-16-3bfc1c",
+            secret_key=secret_key,
+        )
