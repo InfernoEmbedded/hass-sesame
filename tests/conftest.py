@@ -56,9 +56,18 @@ def mock_module(name, attrs=None):
     sys.modules[name] = mod
     return mod
 
+class MockOptionsFlow:
+    def __init__(self, *args, **kwargs):
+        self.hass = None
+    def async_create_entry(self, *args, **kwargs):
+        return {"type": "create_entry", "data": kwargs.get("data", {})}
+    def async_show_form(self, *args, **kwargs):
+        return {"type": "form", "step_id": kwargs.get("step_id")}
+
 # Build the module hierarchy from leaf to root
 config_entries = mock_module("homeassistant.config_entries", {
     "ConfigFlow": MockConfigFlow,
+    "OptionsFlow": MockOptionsFlow,
     "ConfigEntry": MagicMock,
 })
 const = mock_module("homeassistant.const", {

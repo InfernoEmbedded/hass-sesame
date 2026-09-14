@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch, ANY
 import struct
@@ -360,6 +361,8 @@ async def test_scheduler_sync_and_apply_schedules():
     wrapper.recently_deleted_passcodes = {}
     wrapper.recently_deleted_cards = {}
     wrapper.recently_deleted_fingerprints = {}
+    wrapper.is_updating = False
+    wrapper._sync_lock = asyncio.Lock()
     wrapper._handle_status_update = MagicMock()
 
     # Bind the actual method to the mock wrapper instance
@@ -1429,20 +1432,86 @@ async def test_firmware_update_entity_and_dfu(mock_bluetooth):
 
     assert update_entity.name == "Firmware Update"
     assert update_entity.unique_id == "test_mac_update_firmware_update"
-    assert update_entity.latest_version == "v3.0"
 
-    # Simulate device returned installed firmware version v2.0
-    wrapper.device._firmware_version = "v2.0"
+    # Initially without fetching, latest_version is None (no placeholders)
+    assert update_entity.latest_version is None
+    assert update_entity.release_summary == "Firmware update information unavailable."
+
+    # Simulate device returned installed firmware version
+    wrapper.device._firmware_version = "3.0-5-000000"
     wrapper.device.is_logged_in = True
-
-    assert update_entity.installed_version == "v2.0"
+    assert update_entity.installed_version == "3.0-5-000000"
     assert update_entity.available is True
-    assert "v3.0" in update_entity.release_summary
 
-    # Test async_install triggers DFU command
+    # 1. Test successful dynamic fetch from Candy House servers
+    with patch("custom_components.sesame_ble.firmware.fetch_latest_firmware_version", return_value="3.0-5-3bfc1c"):
+        # Make async_add_executor_job execute the function directly in mock hass
+        hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+        await update_entity.async_update()
+        assert update_entity.latest_version == "3.0-5-3bfc1c"
+        assert "3.0-5-3bfc1c" in update_entity.release_summary
+
+    # 2. Test failure when Candy House servers are unreachable
+    from custom_components.sesame_ble.firmware import FirmwareFetchError
+    with patch("custom_components.sesame_ble.firmware.fetch_latest_firmware_version", side_effect=FirmwareFetchError("Server unreachable")):
+        await update_entity.async_update()
+        # Must fail and clear latest_version to None (no fallback placeholders!)
+        assert update_entity.latest_version is None
+        assert update_entity.release_summary == "Firmware update information unavailable."
+
+    # Test async_install triggers authentic DFU workflow
     wrapper.device.enable_dfu = AsyncMock()
-    await update_entity.async_install("v3.0", backup=False)
-    wrapper.device.enable_dfu.assert_called_once()
+    wrapper.device.disconnect = AsyncMock()
+    wrapper.device._auto_reconnect = AsyncMock()
+    wrapper.device._client = MagicMock(is_connected=True)
+
+    mock_dfu_device = MagicMock()
+    mock_dfu_device.address = "DE:34:B7:06:2E:9A"
+    update_entity._async_find_dfu_target = AsyncMock(return_value=mock_dfu_device)
+
+    fake_zip = b"fake_zip_bytes"
+    mock_dfu_client = MagicMock()
+    mock_dfu_client.connect = AsyncMock()
+    mock_dfu_client.disconnect = AsyncMock()
+    with patch("custom_components.sesame_ble.update.download_firmware_zip", return_value=("3.0-5-3bfc1c", fake_zip)), \
+         patch("custom_components.sesame_ble.update.BleakClient", return_value=mock_dfu_client), \
+         patch("bleak_retry_connector.establish_connection", new_callable=AsyncMock, return_value=mock_dfu_client), \
+         patch("bleak_retry_connector.clear_cache", new_callable=AsyncMock), \
+         patch("custom_components.sesame_ble.update.perform_nordic_dfu", new_callable=AsyncMock) as mock_perform_dfu, \
+         patch("asyncio.sleep", new_callable=AsyncMock):
+        await update_entity.async_install("3.0-5-3bfc1c", backup=False)
+
+        wrapper.device.enable_dfu.assert_called_once()
+        wrapper.device.disconnect.assert_called_once()
+        mock_perform_dfu.assert_awaited_once()
+        assert update_entity.in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_options_flow():
+    """Test Sesame BLE OptionsFlowHandler."""
+    from custom_components.sesame_ble.config_flow import SesameBleOptionsFlowHandler
+    from custom_components.sesame_ble.const import CONF_API_KEY, CONF_COGNITO_POOL_ID
+
+    entry = MagicMock()
+    entry.options = {CONF_API_KEY: "existing_key", CONF_COGNITO_POOL_ID: "existing_pool"}
+
+    handler = SesameBleOptionsFlowHandler(entry)
+
+    # Step init without user input shows form
+    result = await handler.async_step_init()
+    assert result["type"] == "form"
+    assert result["step_id"] == "init"
+
+    # Step init with user input creates entry
+    result2 = await handler.async_step_init({
+        CONF_API_KEY: "new_api_key",
+        CONF_COGNITO_POOL_ID: "new_cognito_pool",
+    })
+    assert result2["type"] == "create_entry"
+    assert result2["data"][CONF_API_KEY] == "new_api_key"
+    assert result2["data"][CONF_COGNITO_POOL_ID] == "new_cognito_pool"
+
 
 
 

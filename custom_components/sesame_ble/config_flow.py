@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 import logging
 from typing import Any
@@ -19,7 +20,15 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.helpers.device_registry import format_mac
 
-from .const import CONF_MODEL, CONF_QR_URL, CONF_SECRET_KEY, CONF_DEVICE_UUID, DOMAIN
+from .const import (
+    CONF_API_KEY,
+    CONF_COGNITO_POOL_ID,
+    CONF_MODEL,
+    CONF_QR_URL,
+    CONF_SECRET_KEY,
+    CONF_DEVICE_UUID,
+    DOMAIN,
+)
 from .sesame_client import COMPANY_ID, ProductModels, SesameQRCode, SesameAdData, get_sesame_mfg_data
 from .sesame_client.device import SesameDevice
 
@@ -752,3 +761,47 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={"model": friendly_model, "mac": self._mac_address},
             errors=errors,
         )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> Any:
+        """Create the options flow."""
+        return SesameBleOptionsFlowHandler(config_entry)
+
+
+OptionsFlowBase = getattr(config_entries, "OptionsFlow", object)
+
+
+class SesameBleOptionsFlowHandler(OptionsFlowBase):
+    """Handle options for Sesame BLE integration."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize Sesame BLE options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_api_key = self.config_entry.options.get(
+            CONF_API_KEY, os.environ.get("SESAME_API_KEY", "")
+        )
+        current_pool_id = self.config_entry.options.get(
+            CONF_COGNITO_POOL_ID, os.environ.get("SESAME_COGNITO_POOL_ID", "")
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_API_KEY, default=current_api_key): str,
+                    vol.Optional(CONF_COGNITO_POOL_ID, default=current_pool_id): str,
+                }
+            ),
+        )
+

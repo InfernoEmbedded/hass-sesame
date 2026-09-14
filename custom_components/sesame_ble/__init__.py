@@ -14,7 +14,15 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.storage import Store
 
 
-from .const import CONF_MODEL, CONF_SECRET_KEY, CONF_DEVICE_UUID, DOMAIN
+from .const import (
+    CONF_API_KEY,
+    CONF_COGNITO_POOL_ID,
+    CONF_MODEL,
+    CONF_SECRET_KEY,
+    CONF_DEVICE_UUID,
+    DOMAIN,
+)
+from . import firmware
 from .sesame_client import (
     COMPANY_ID,
     ProductModels,
@@ -111,6 +119,8 @@ class SesameDeviceWrapper:
         self.recently_deleted_passcodes = {}
         self.recently_deleted_cards = {}
         self.recently_deleted_fingerprints = {}
+        self._latest_firmware_version: str | None = None
+        self._latest_firmware_info: dict[str, Any] | None = None
 
         # Instantiates the correct device type using library factory
         self.device = create_sesame_device(
@@ -138,7 +148,13 @@ class SesameDeviceWrapper:
             listener()
 
         # Trigger immediate sync for keypads to make Home Assistant instantly aware of updates (e.g. card/fingerprint scans)
-        if is_keypad_model(self.model_name):
+        if (
+            is_keypad_model(self.model_name)
+            and getattr(self.device, "is_connected", False)
+            and getattr(self.device, "is_logged_in", False)
+            and not getattr(self.device, "_auto_reconnect_paused", False)
+            and not getattr(self, "is_updating", False)
+        ):
             if self._sync_lock.locked():
                 logger.info("[_handle_status_update] Sync already in progress for keypad %s, skipping immediate trigger", device.mac_address)
             else:
@@ -154,38 +170,61 @@ class SesameDeviceWrapper:
 
         return remove_listener
 
+    def _get_firmware_credentials(self) -> tuple[str | None, str | None]:
+        """Retrieve configured firmware credentials from options, entry data, or environment."""
+        api_key = self.entry.options.get(CONF_API_KEY) or self.entry.data.get(CONF_API_KEY)
+        pool_id = self.entry.options.get(CONF_COGNITO_POOL_ID) or self.entry.data.get(CONF_COGNITO_POOL_ID)
+        return api_key, pool_id
+
     @property
     def latest_firmware_version(self) -> str | None:
-        """Return the latest firmware version available for this device model."""
-        firmware_catalog = {
-            "SESAME 5": "v3.0",
-            "SESAME5": "v3.0",
-            "SESAME 5 PRO": "v3.0",
-            "SESAME5_PRO": "v3.0",
-            "SESAME BIKE 2": "v3.0",
-            "SESAME_BIKE2": "v3.0",
-            "SESAME BIKE 3": "v3.0",
-            "SESAME_BIKE3": "v3.0",
-            "SESAME 6": "v1.2",
-            "SESAME6": "v1.2",
-            "SESAME 6 PRO": "v1.2",
-            "SESAME6_PRO": "v1.2",
-            "Sesame Touch": "v2.1",
-            "SESAME_TOUCH": "v2.1",
-            "Sesame Touch 2": "v1.1",
-            "SESAME_TOUCH_2": "v1.1",
-            "Sesame Touch Pro": "v2.1",
-            "SESAME_TOUCH_PRO": "v2.1",
-            "Sesame Face": "v1.1",
-            "SESAME_FACE": "v1.1",
-            "Sesame Face Pro": "v1.1",
-            "SESAME_FACE_PRO": "v1.1",
-            "Sesame Face AI": "v1.0.4",
-            "SESAME_FACE_AI": "v1.0.4",
-            "Sesame Face Pro AI": "v1.0.4",
-            "SESAME_FACE_PRO_AI": "v1.0.4",
-        }
-        return firmware_catalog.get(self.model_name) or getattr(self.device, "firmware_version", None)
+        """Return the latest firmware version available for this device model, or None if not fetched or unavailable."""
+        return self._latest_firmware_version
+
+    async def async_fetch_latest_firmware(self, force: bool = False) -> str | None:
+        """Fetch the latest firmware version dynamically from Candy House cloud servers or local storage.
+
+        Gracefully skips cloud checks if credentials are not configured.
+        """
+        product_type = firmware.get_product_type_id(self.model_name)
+        if product_type is None:
+            logger.warning("Could not determine productType ID for model %s", self.model_name)
+            self._latest_firmware_version = None
+            return None
+
+        config_dir = getattr(self.hass.config, "config_dir", None) if hasattr(self.hass, "config") else None
+        api_key, pool_id = self._get_firmware_credentials()
+
+        try:
+            version = await self.hass.async_add_executor_job(
+                firmware.fetch_latest_firmware_version,
+                product_type,
+                force,
+                api_key,
+                pool_id,
+                config_dir,
+                self.model_name,
+            )
+            self._latest_firmware_version = version
+            for listener in list(self.update_listeners):
+                try:
+                    listener()
+                except Exception:
+                    pass
+            return version
+        except firmware.FirmwareCredentialsMissingError as err:
+            logger.info("Firmware check skipped for %s: %s", self.model_name, err)
+            self._latest_firmware_version = None
+            return None
+        except Exception as err:
+            self._latest_firmware_version = None
+            logger.error(
+                "Failed to fetch latest firmware for %s (productType %d) from Candy House servers: %s",
+                self.model_name,
+                product_type,
+                err,
+            )
+            raise
 
     async def async_connect(self) -> None:
         """Connect and authenticate with the device."""
@@ -458,6 +497,16 @@ class SesameDeviceWrapper:
     async def _sync_and_apply_schedules(self) -> None:
         """Sync with physical keypad and apply passcode schedules."""
         if not isinstance(self.device, BaseKeypad):
+            return
+        if (
+            getattr(self, "is_updating", False)
+            or not getattr(self.device, "is_logged_in", False)
+            or getattr(self.device, "_auto_reconnect_paused", False)
+        ):
+            return
+
+        if self._sync_lock.locked():
+            logger.info("[_sync_and_apply_schedules] Sync already in progress for keypad %s, skipping duplicate trigger", self.device.mac_address)
             return
 
         logger.info("[_sync_and_apply_schedules] Starting sync for keypad %s", self.device.mac_address)
@@ -950,6 +999,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = wrapper
+    entry.async_on_unload(entry.add_update_listener(update_listener))
 
     views_reg_key = f"{DOMAIN}_views_registered"
     if views_reg_key not in hass.data:
@@ -1298,3 +1348,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await wrapper.async_disconnect()
 
     return unload_ok
+
+
+async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options update."""
+    await hass.config_entries.async_reload(entry.entry_id)
+

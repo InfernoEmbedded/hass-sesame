@@ -381,6 +381,7 @@ class SesameDevice:
         self._client = None
         self._cipher = None
         self._reconnect_task = None
+        self._auto_reconnect_paused = False
 
         self._login_event = asyncio.Event()
         self._send_lock = asyncio.Lock()
@@ -588,11 +589,22 @@ class SesameDevice:
         if was_logged_in and self._status_cb:
             self._status_cb(self, self)
 
+    def pause_auto_reconnect(self) -> None:
+        """Cancels and suppresses automatic reconnection during DFU or manual disconnect."""
+        self._auto_reconnect_paused = True
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
+
+    def resume_auto_reconnect(self) -> None:
+        """Restores automatic reconnection."""
+        self._auto_reconnect_paused = False
+
     def _on_disconnect(self, client: BleakClient) -> None:
         del client
         logger.warning("Sesame BLE disconnected unexpectedly [address=%s]", self.address)
         self._reset_state()
-        if self._reconnect_limit and (not self._reconnect_task or self._reconnect_task.done()):
+        if not self._auto_reconnect_paused and self._reconnect_limit and (not self._reconnect_task or self._reconnect_task.done()):
             self._reconnect_task = asyncio.create_task(self._auto_reconnect())
 
     async def _auto_reconnect(self) -> None:
@@ -1307,15 +1319,16 @@ class SesameKeypad(SesameDevice, BaseKeypad):
             self.passcodes = {}
             return self.passcodes
 
-        self._sync_future = asyncio.get_running_loop().create_future()
+        fut = self._sync_future = asyncio.get_running_loop().create_future()
         self._temp_passcodes = {}
 
         try:
             await self.send_command(ITEM_PASSCODE_GET, b"", encrypt=True, wait_for_response=False)
-            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            await asyncio.wait_for(fut, timeout=15.0)
             return self.passcodes
         finally:
-            self._sync_future = None
+            if self._sync_future is fut:
+                self._sync_future = None
 
     def _resolve_code(self, code_or_id: str) -> bytes:
         """Resolves raw digits (e.g. '1234') or Hex ID string (e.g. '01020304') to bytes."""
@@ -1426,15 +1439,16 @@ class SesameKeypad(SesameDevice, BaseKeypad):
             self.cards = {}
             return self.cards
 
-        self._sync_future = asyncio.get_running_loop().create_future()
+        fut = self._sync_future = asyncio.get_running_loop().create_future()
         self._temp_cards = {}
 
         try:
             await self.send_command(ITEM_CARD_GET, b"", encrypt=True, wait_for_response=False)
-            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            await asyncio.wait_for(fut, timeout=15.0)
             return self.cards
         finally:
-            self._sync_future = None
+            if self._sync_future is fut:
+                self._sync_future = None
 
     async def delete_card(self, card_id: str) -> None:
         """Deletes a card from the keypad."""
@@ -1460,15 +1474,16 @@ class SesameKeypad(SesameDevice, BaseKeypad):
             self.fingerprints = {}
             return self.fingerprints
 
-        self._sync_future = asyncio.get_running_loop().create_future()
+        fut = self._sync_future = asyncio.get_running_loop().create_future()
         self._temp_fingerprints = {}
 
         try:
             await self.send_command(ITEM_FINGER_GET, b"", encrypt=True, wait_for_response=False)
-            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            await asyncio.wait_for(fut, timeout=15.0)
             return self.fingerprints
         finally:
-            self._sync_future = None
+            if self._sync_future is fut:
+                self._sync_future = None
 
     async def delete_fingerprint(self, finger_id: str) -> None:
         """Deletes a fingerprint from the keypad."""
@@ -1518,15 +1533,16 @@ class SesameKeypad(SesameDevice, BaseKeypad):
             self.faces = {}
             return self.faces
 
-        self._sync_future = asyncio.get_running_loop().create_future()
+        fut = self._sync_future = asyncio.get_running_loop().create_future()
         self._temp_faces = {}
 
         try:
             await self.send_command(ITEM_FACE_GET, b"", encrypt=True, wait_for_response=False)
-            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            await asyncio.wait_for(fut, timeout=15.0)
             return self.faces
         finally:
-            self._sync_future = None
+            if self._sync_future is fut:
+                self._sync_future = None
 
     async def delete_face(self, face_id: str) -> None:
         """Deletes a face from the keypad."""
@@ -1560,15 +1576,16 @@ class SesameKeypad(SesameDevice, BaseKeypad):
             self.palms = {}
             return self.palms
 
-        self._sync_future = asyncio.get_running_loop().create_future()
+        fut = self._sync_future = asyncio.get_running_loop().create_future()
         self._temp_palms = {}
 
         try:
             await self.send_command(ITEM_PALM_GET, b"", encrypt=True, wait_for_response=False)
-            await asyncio.wait_for(self._sync_future, timeout=15.0)
+            await asyncio.wait_for(fut, timeout=15.0)
             return self.palms
         finally:
-            self._sync_future = None
+            if self._sync_future is fut:
+                self._sync_future = None
 
     async def delete_palm(self, palm_id: str) -> None:
         """Deletes a palm from the keypad."""

@@ -21,10 +21,14 @@ from urllib.parse import parse_qsl, quote, urlparse
 
 # AWS Cognito and API Gateway constants from Candy House app
 COGNITO_REGION = "ap-northeast-1"
-COGNITO_IDENTITY_POOL_ID = "ap-northeast-1:e5a1e548-564f-4681-bd5c-ec746ec9c684"
 API_GATEWAY_HOST = "app.candyhouse.co"
-API_KEY = "FK57aBCuLc7eTLGQLNFDV58p045azBk19Qeo3DnO"
 API_URL_TEMPLATE = "https://app.candyhouse.co/prod/device/v1/firmwareZipUrl"
+
+DEFAULT_CREDENTIALS_FILENAMES = (
+    "sesame_credentials.json",
+    "sesame_firmware_credentials.json",
+    "/config/sesame_credentials.json",
+)
 
 # Device model catalog: maps canonical model names to their integer productType IDs
 MODEL_CATALOG = {
@@ -65,8 +69,52 @@ MODEL_CATALOG = {
 }
 
 
-def get_cognito_credentials(region: str = COGNITO_REGION, pool_id: str = COGNITO_IDENTITY_POOL_ID) -> dict[str, str]:
+def resolve_credentials(
+    api_key: str | None = None,
+    pool_id: str | None = None,
+    credentials_file: str | None = None,
+) -> tuple[str, str]:
+    """Resolve API Key and Cognito Identity Pool ID from args, env, or credentials file."""
+    resolved_api_key = api_key or os.environ.get("SESAME_API_KEY", "")
+    resolved_pool_id = pool_id or os.environ.get("SESAME_COGNITO_POOL_ID", "")
+
+    if not resolved_api_key or not resolved_pool_id:
+        files_to_check = []
+        if credentials_file:
+            files_to_check.append(credentials_file)
+        files_to_check.extend(DEFAULT_CREDENTIALS_FILENAMES)
+
+        for fpath in files_to_check:
+            if os.path.isfile(fpath):
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if not resolved_api_key:
+                            resolved_api_key = data.get("api_key") or data.get("API_KEY") or ""
+                        if not resolved_pool_id:
+                            resolved_pool_id = (
+                                data.get("cognito_identity_pool_id")
+                                or data.get("cognito_pool_id")
+                                or data.get("COGNITO_IDENTITY_POOL_ID")
+                                or ""
+                            )
+                except Exception:
+                    pass
+
+    if not resolved_api_key or not resolved_pool_id:
+        raise ValueError("Candy House cloud credentials (API Key and Cognito Pool ID) not configured.")
+
+    return resolved_api_key.strip(), resolved_pool_id.strip()
+
+
+def get_cognito_credentials(region: str = COGNITO_REGION, pool_id: str | None = None) -> dict[str, str]:
     """Retrieves temporary AWS credentials from the unauthenticated Cognito identity pool."""
+    if not pool_id:
+        try:
+            _, pool_id = resolve_credentials()
+        except ValueError:
+            pool_id = "ap-northeast-1:unconfigured"
+
     # 1. GetId
     req_id = urllib.request.Request(
         f"https://cognito-identity.{region}.amazonaws.com/",
@@ -160,13 +208,20 @@ def query_firmware_info(
     product_type: int,
     creds: dict[str, str],
     firmware_dir: str = "prod",
+    api_key: str | None = None,
 ) -> dict | None:
     """Queries the Candy House cloud API for the latest firmware URL of a productType."""
+    if not api_key:
+        try:
+            api_key, _ = resolve_credentials()
+        except ValueError:
+            api_key = ""
+
     url = f"{API_URL_TEMPLATE}?productType={product_type}"
     if firmware_dir != "prod":
         url += f"&firmwareDir={quote(firmware_dir)}"
 
-    headers = {"x-api-key": API_KEY}
+    headers = {"x-api-key": api_key}
     signed_headers = sign_aws_v4("GET", url, headers, creds)
 
     py_req = urllib.request.Request(url, headers=signed_headers)
@@ -199,23 +254,26 @@ def process_model(
     extract: bool = True,
     force: bool = False,
     dry_run: bool = False,
+    api_key: str | None = None,
 ) -> dict | None:
-    """Checks and downloads firmware for a given model."""
+    """Checks and downloads firmware for a specific model."""
+    print(f"[{model_name}] Querying productType {product_type}...")
     try:
-        info = query_firmware_info(product_type, creds, firmware_dir=firmware_dir)
+        info = query_firmware_info(product_type, creds, firmware_dir=firmware_dir, api_key=api_key)
     except Exception as err:
-        print(f"[{model_name}] Error querying API: {err}", file=sys.stderr)
+        print(f"  Failed to query metadata: {err}", file=sys.stderr)
         return None
 
     if not info:
-        print(f"[{model_name}] No firmware available (productType={product_type})")
+        print("  No firmware release found.")
         return None
 
     zip_url = info.get("zipUrl")
-    file_name = info.get("fileName") or f"{model_name}.zip"
-    firmware_name = info.get("firmwareName", "")
+    firmware_name = info.get("firmwareName", f"model_{product_type}")
+    file_name = info.get("fileName", f"{firmware_name}.zip")
 
-    print(f"[{model_name}] Latest firmware: {firmware_name} ({file_name})")
+    print(f"  Latest firmware: {firmware_name} ({file_name})")
+    print(f"  Download URL:    {zip_url}")
 
     if dry_run:
         return info
@@ -225,26 +283,9 @@ def process_model(
 
     zip_dest = os.path.join(model_dir, file_name)
 
-    # Check if file already downloaded
-    if os.path.exists(zip_dest) and not force:
-        print(f"[{model_name}] Archive already exists at {zip_dest} (use --force to re-download)")
-    else:
-        print(f"[{model_name}] Downloading from {zip_url} ...")
-        download_file(zip_url, zip_dest)
-        print(f"[{model_name}] Downloaded to {zip_dest}")
-
-    # Extract archive if requested
-    if extract:
-        try:
-            with zipfile.ZipFile(zip_dest, "r") as zf:
-                zf.extractall(model_dir)
-            print(f"[{model_name}] Extracted contents to {model_dir}/")
-        except Exception as e:
-            print(f"[{model_name}] Failed to extract zip: {e}", file=sys.stderr)
-
-    # Save metadata
-    meta_path = os.path.join(model_dir, "metadata.json")
-    with open(meta_path, "w", encoding="utf-8") as f:
+    # Save API metadata
+    metadata_dest = os.path.join(model_dir, "metadata.json")
+    with open(metadata_dest, "w", encoding="utf-8") as f:
         json.dump(
             {
                 "model": model_name,
@@ -258,35 +299,57 @@ def process_model(
             indent=2,
         )
 
+    if os.path.exists(zip_dest) and not force:
+        print(f"  Archive {file_name} already exists. Use --force to re-download.")
+    else:
+        print(f"  Downloading {file_name}...")
+        try:
+            download_file(zip_url, zip_dest)
+            print(f"  Saved to {zip_dest}")
+        except Exception as err:
+            print(f"  Download failed: {err}", file=sys.stderr)
+            return None
+
+    if extract and os.path.exists(zip_dest):
+        print("  Unpacking DFU package...")
+        try:
+            with zipfile.ZipFile(zip_dest, "r") as zf:
+                zf.extractall(model_dir)
+            print(f"  Extracted package contents into {model_dir}")
+        except Exception as err:
+            print(f"  Failed to extract zip archive: {err}", file=sys.stderr)
+            return None
+
     return info
 
 
-def main():
+def main() -> int:
+    """Main CLI entrypoint."""
     parser = argparse.ArgumentParser(
-        description="Download latest Candy House Sesame firmware updates into the firmware directory.",
+        description="Download latest firmware update files for Sesame BLE devices from Candy House cloud."
     )
     parser.add_argument(
         "--model",
         "-m",
         default="all",
-        help="Target device model (e.g. sesame6_pro, sesame_touch_2_pro, or 'all'). Default: all",
+        help="Device model name (e.g. sesame5, sesame_touch_pro, sesame_face_pro_ai) or 'all' (default: all)",
+    )
+    parser.add_argument(
+        "--env",
+        "-e",
+        default="prod",
+        help="Firmware channel directory ('prod' or 'test', default: prod)",
     )
     parser.add_argument(
         "--output-dir",
         "-o",
         default="firmware",
-        help="Output directory path (default: 'firmware')",
-    )
-    parser.add_argument(
-        "--env",
-        default="prod",
-        choices=["prod", "dev"],
-        help="Firmware channel ('prod' or 'dev'). Default: prod",
+        help="Target output directory to store downloaded firmware files (default: firmware)",
     )
     parser.add_argument(
         "--no-extract",
         action="store_true",
-        help="Do not extract the firmware zip archive",
+        help="Do not automatically unzip downloaded archives",
     )
     parser.add_argument(
         "--force",
@@ -304,6 +367,18 @@ def main():
         action="store_true",
         help="List all known device models and exit",
     )
+    parser.add_argument(
+        "--api-key",
+        help="Candy House cloud API key (or set SESAME_API_KEY)",
+    )
+    parser.add_argument(
+        "--pool-id",
+        help="AWS Cognito Identity Pool ID (or set SESAME_COGNITO_POOL_ID)",
+    )
+    parser.add_argument(
+        "--credentials-file",
+        help="Path to JSON file containing credentials (api_key and cognito_identity_pool_id)",
+    )
 
     args = parser.parse_args()
 
@@ -318,11 +393,9 @@ def main():
         target_models = MODEL_CATALOG
     else:
         req_name = args.model.lower().strip()
-        # Direct match or integer lookup
         if req_name in MODEL_CATALOG:
             target_models = {req_name: MODEL_CATALOG[req_name]}
         else:
-            # Check if integer ID was provided
             try:
                 val = int(req_name)
                 found = False
@@ -337,9 +410,25 @@ def main():
                 print(f"Error: Unknown model '{args.model}'. Use --list-models to see available models.", file=sys.stderr)
                 return 1
 
+    try:
+        api_key, pool_id = resolve_credentials(
+            api_key=args.api_key,
+            pool_id=args.pool_id,
+            credentials_file=args.credentials_file,
+        )
+    except ValueError:
+        print("Error: Candy House cloud credentials not configured.", file=sys.stderr)
+        print("Please provide credentials via:", file=sys.stderr)
+        print("  1. CLI arguments: --api-key <KEY> --pool-id <POOL_ID>", file=sys.stderr)
+        print("  2. Environment variables: SESAME_API_KEY and SESAME_COGNITO_POOL_ID", file=sys.stderr)
+        print("  3. Credentials file: sesame_credentials.json (or --credentials-file)", file=sys.stderr)
+        print("You can extract them directly from the Sesame Android APK using:", file=sys.stderr)
+        print("  python3 tools/extract_apk_credentials.py <path_to_apk> --out sesame_credentials.json", file=sys.stderr)
+        return 1
+
     print("Authenticating with AWS Cognito...")
     try:
-        creds = get_cognito_credentials()
+        creds = get_cognito_credentials(pool_id=pool_id)
     except Exception as err:
         print(f"Failed to obtain Cognito credentials: {err}", file=sys.stderr)
         return 1
@@ -357,6 +446,7 @@ def main():
             extract=not args.no_extract,
             force=args.force,
             dry_run=args.dry_run,
+            api_key=api_key,
         )
         if result:
             success_count += 1
