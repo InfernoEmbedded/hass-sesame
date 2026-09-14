@@ -71,6 +71,12 @@ Installing the integration installs both components: the **Sesame BLE Lock Drive
    - **Direct BLE Enrollment via Reset Button (100% App-Free)**: Put your Sesame lock or keypad into its unregistered pairing state by holding down its physical reset button (located under the battery cover or back plate) until it flashes/beeps. Select **Discover Unregistered Devices** in Home Assistant; the integration will automatically detect the reset device, perform the secure BLE registration handshake, retrieve its secret key, and add it directly.
    - **Manual Configuration**: Manually enter the Bluetooth MAC Address, Device UUID, and Secret Key.
 
+### Optional: Cloud Credentials for Firmware Updates (Options Flow)
+To enable automatic cloud checks and one-click over-the-air (OTA) firmware updates via Home Assistant's `update` entity:
+1. Go to **Settings** -> **Devices & Services** -> **Candy House Sesame BLE**.
+2. Click **Configure** on any Sesame device entry.
+3. Enter your **API Key** and **Cognito Identity Pool ID** (see [Firmware Updates & Cloud Credentials](#firmware-updates--cloud-credentials) below for extraction steps).
+
 ---
 
 ## Keypad Manager Sidebar Panel
@@ -129,6 +135,12 @@ Depending on the hardware configured, the integration creates the following Home
 | `sensor.<name>_paired_locks` | `sensor` | Diagnostic | Reports the count of paired locks. Exposes detailed paired lock info (UUIDs, statuses) in its `paired_locks` state attribute. |
 | `select.<name>_pair_lock` | `select` | Config | Dropdown list of HA-configured Sesame locks not yet paired to this keypad. Selecting a lock pairs it. |
 | `select.<name>_unpair_lock` | `select` | Config | Dropdown list of locks paired to this keypad. Selecting a lock unpairs it. |
+
+### 🔄 Firmware Update Entity (All Locks & Keypads)
+
+| Entity ID | Platform | Category | Description / Features |
+| :--- | :--- | :--- | :--- |
+| `update.<name>_firmware_update` | `update` | Config | Monitors current firmware version against the latest Candy House release or local offline package. Enables triggering full over-the-air (OTA) Nordic DFU flashing directly from Home Assistant with live percentage progress tracking. |
 
 ---
 
@@ -247,29 +259,130 @@ action:
 
 ---
 
-## Firmware Downloader
+## Firmware Updates & Cloud Credentials
 
-The repository includes a standalone tool, `download_firmware.py`, that automatically queries the official Candy House AWS Cognito & API Gateway cloud endpoints to fetch and unpack the latest Nordic DFU firmware update archives for all 31 supported device models directly into the `firmware/` directory:
+The integration includes full support for over-the-air (OTA) Nordic DFU firmware flashing for all supported locks and keypads directly from Home Assistant or via the standalone `download_firmware.py` tool.
+
+### What Works vs. What Won't Work Without Credentials
+
+Candy House locks and keypads use direct BLE communication. **Cloud credentials are never required for normal, local operation.**
+
+| Feature | Without Credentials | With Credentials |
+| :--- | :---: | :---: |
+| 🔒 **Local BLE Lock & Unlock** | ✅ **100% Local** | ✅ **100% Local** |
+| 🔋 **Battery, Motor Angles & Telemetry** | ✅ **100% Local** | ✅ **100% Local** |
+| ⌨️ **Keypad Passcodes, OTPs & Schedules** | ✅ **100% Local** | ✅ **100% Local** |
+| 👤 **Face, Palm, Fingerprint & Card Access** | ✅ **100% Local** | ✅ **100% Local** |
+| 📜 **Local Operation History Logs** | ✅ **100% Local** | ✅ **100% Local** |
+| 🔗 **Keypad-to-Lock Pairing** | ✅ **100% Local** | ✅ **100% Local** |
+| 📁 **Offline Firmware Flashing** (`/config/sesame_firmware/`) | ✅ **100% Local** | ✅ **100% Local** |
+| ☁️ **Automatic Cloud Firmware Version Checks** | ❌ Skipped gracefully | ✅ Automatic via Candy House AWS API |
+| ⬇️ **One-Click In-HA Cloud Firmware Download** | ❌ Manual `.zip` required | ✅ Automatic download & DFU flash |
+
+> [!NOTE]
+> **Your Sesame devices will work completely fine without cloud credentials.**
+> All day-to-day operations communicate strictly between your Home Assistant Bluetooth adapter and the physical hardware over BLE.
+>
+> An **API Key** and **AWS Cognito Identity Pool ID** are **only** needed if you want Home Assistant to automatically poll Candy House's AWS API for newer firmware versions and download the DFU update archives from their cloud. If no credentials are configured and no local firmware file is provided, the `update` entity simply reports that cloud checks are skipped—it will **not** raise errors, fail to load, or degrade device control.
+
+---
+
+### How to Extract the API Credentials
+
+Candy House's official Android mobile app contains static client credentials used to query their AWS API Gateway and Cognito services for firmware release manifests. You can extract these credentials in seconds using the offline tool provided in this repository: `tools/extract_apk_credentials.py`.
+
+The extractor runs **100% locally and offline** without making any external network requests. It parses Dalvik Executable (DEX) bytecode using Python's standard library to retrieve the API key and unauthenticated Cognito Pool ID:
+
+#### Method 1: From a Downloaded Sesame APK File
+1. Download an official Sesame APK (from your phone or via an APK mirror such as APKPure or APKMirror).
+2. Run the extractor:
+   ```bash
+   python3 tools/extract_apk_credentials.py path/to/Sesame.apk
+   ```
+
+#### Method 2: Extract Directly from Connected Android Phone via ADB
+If you have an Android device with the Sesame app installed and USB Debugging enabled:
+```bash
+python3 tools/extract_apk_credentials.py --adb
+```
+*The script automatically detects connected devices via `adb`, locates the installed Sesame package (`co.candyhouse.sesame2`), pulls the APK to a temporary directory, extracts the credentials, and cleans up.*
+
+#### Method 3: Output Directly to a Home Assistant Credentials File
+```bash
+python3 tools/extract_apk_credentials.py path/to/Sesame.apk --out /config/sesame_credentials.json
+```
+
+#### Additional Extractor Flags
+- `--out <path>` / `-o <path>`: Save extracted credentials as JSON to the specified path.
+- `--env`: Format output as shell `export` statements (`export SESAME_API_KEY=...`).
+- `--json`: Output raw JSON to standard output.
+
+---
+
+### Where to Put the Credentials
+
+The integration supports four configuration methods with automatic fallback priority:
+
+#### 1. Home Assistant UI (Options Flow - Recommended)
+This is the easiest method and applies immediately without restarting Home Assistant:
+1. Navigate to **Settings** -> **Devices & Services** -> **Candy House Sesame BLE**.
+2. Click **Configure** on any Sesame device entry.
+3. Paste the **API Key** and **Cognito Pool ID** into the form fields.
+4. Click **Submit**.
+
+#### 2. JSON Credentials File (`sesame_credentials.json`)
+Create a JSON file named `sesame_credentials.json` in your Home Assistant configuration directory (`/config/sesame_credentials.json`):
+```json
+{
+  "api_key": "YOUR_EXTRACTED_API_KEY",
+  "cognito_identity_pool_id": "ap-northeast-1:YOUR_EXTRACTED_COGNITO_POOL_ID"
+}
+```
+*(Restrict permissions on the file: `chmod 600 /config/sesame_credentials.json`).*
+
+You can also specify an alternate file path by setting the `SESAME_CREDENTIALS_FILE` environment variable.
+
+#### 3. Environment Variables
+If running Home Assistant Container, Supervised, or Core, set the environment variables:
+```bash
+export SESAME_API_KEY="YOUR_EXTRACTED_API_KEY"
+export SESAME_COGNITO_POOL_ID="ap-northeast-1:YOUR_EXTRACTED_COGNITO_POOL_ID"
+```
+
+#### 4. Zero-Cloud Local Firmware Directory (No Keys Needed)
+If you prefer not to configure cloud credentials, you can update firmware completely offline. Place downloaded Nordic DFU `.zip` packages in:
+- `/config/sesame_firmware/` (or `/share/sesame_firmware/`)
+
+Name the zip archive matching the device product type or model name (e.g. `prod_22.zip` or `sesame_face_pro_ai.zip`). The integration's `update` entity will detect local firmware archives automatically and offer them for installation over BLE!
+
+---
+
+### Firmware Downloader CLI Tool
+
+The repository also includes `download_firmware.py`, a standalone CLI tool that queries Candy House's AWS cloud to download and unpack the latest Nordic DFU firmware archives for all 31 supported hardware models into a local `firmware/` folder:
 
 ```bash
-# Download and unpack firmware for all 31 supported device models
+# Download firmware for all 31 supported models using credentials file or env vars
 python download_firmware.py
+
+# Specify credentials directly via CLI flags
+python download_firmware.py --api-key <KEY> --pool-id <POOL_ID>
 
 # Download firmware for specific models (e.g. Sesame 6 Pro and Touch 2 Pro)
 python download_firmware.py --models sesame6_pro sesame_touch_2_pro
 
-# List all available models supported by the Candy House cloud endpoints
-python download_firmware.py --list-models
-
-# Dry run (query available versions without downloading archives)
+# Check available versions without downloading archives (dry run)
 python download_firmware.py --dry-run
+
+# List all 31 supported hardware models and productType IDs
+python download_firmware.py --list-models
 ```
 
 Each downloaded model is staged in `firmware/<model_name>/` containing:
-- `manifest.json`: Firmware version, target hardware, and Nordic DFU packet metadata.
-- `firmware.bin`: Raw ARM Cortex-M4 binary executed by both physical hardware and the simulation emulator.
+- `manifest.json`: Nordic DFU packet manifest and hardware version parameters.
+- `firmware.bin`: ARM Cortex-M4 binary executed by both physical hardware and the simulation emulator.
 - `firmware.dat`: Signed init packet for Nordic DFU verification.
-- `metadata.json`: Cloud API query response with timestamps and asset hashes.
+- `metadata.json`: Release timestamps and file checksums.
 
 > [!NOTE]
 > The `firmware/` directory is gitignored by default so binary artifacts are never committed to version control. Downloaded binaries are directly consumed by the simulation environment (`sesame_sim`) to run authentic Candy House firmware in memory.
