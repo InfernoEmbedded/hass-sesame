@@ -505,13 +505,14 @@ class SesameDeviceWrapper:
         ):
             return
 
+        mac_addr = getattr(self.device, "mac_address", getattr(getattr(self, "ble_device", None), "address", "keypad"))
         if self._sync_lock.locked():
-            logger.info("[_sync_and_apply_schedules] Sync already in progress for keypad %s, skipping duplicate trigger", self.device.mac_address)
+            logger.info("[_sync_and_apply_schedules] Sync already in progress for keypad %s, skipping duplicate trigger", mac_addr)
             return
 
-        logger.info("[_sync_and_apply_schedules] Starting sync for keypad %s", self.device.mac_address)
+        logger.info("[_sync_and_apply_schedules] Starting sync for keypad %s", mac_addr)
         async with self._sync_lock:
-            logger.info("[_sync_and_apply_schedules] Acquired sync lock for %s", self.device.mac_address)
+            logger.info("[_sync_and_apply_schedules] Acquired sync lock for %s", mac_addr)
             # Ensure we have latest physical passcodes
             logger.debug("[_sync_and_apply_schedules] Calling get_passcodes()")
             await self.device.get_passcodes()
@@ -548,9 +549,18 @@ class SesameDeviceWrapper:
 
             import time
             now_ts = time.time()
-            self.recently_deleted_passcodes = {uid: ts for uid, ts in self.recently_deleted_passcodes.items() if now_ts - ts < 30.0}
-            self.recently_deleted_cards = {uid: ts for uid, ts in self.recently_deleted_cards.items() if now_ts - ts < 30.0}
-            self.recently_deleted_fingerprints = {uid: ts for uid, ts in self.recently_deleted_fingerprints.items() if now_ts - ts < 30.0}
+            self.recently_deleted_passcodes = {
+                uid: ts for uid, ts in self.recently_deleted_passcodes.items()
+                if (now_ts - ts < 30.0) or (uid in physical_passcodes and now_ts - ts < 86400.0)
+            }
+            self.recently_deleted_cards = {
+                uid: ts for uid, ts in self.recently_deleted_cards.items()
+                if (now_ts - ts < 30.0) or (uid in physical_cards and now_ts - ts < 86400.0)
+            }
+            self.recently_deleted_fingerprints = {
+                uid: ts for uid, ts in self.recently_deleted_fingerprints.items()
+                if (now_ts - ts < 30.0) or (uid in physical_fingerprints and now_ts - ts < 86400.0)
+            }
 
             now = datetime.datetime.now()
             changed = False
@@ -585,8 +595,15 @@ class SesameDeviceWrapper:
                                 changed = True
 
             # 1. Sync physical passcodes to logical (added via app)
-            for uid, phys_info in physical_passcodes.items():
+            for uid, phys_info in list(physical_passcodes.items()):
                 if uid in self.recently_deleted_passcodes:
+                    logger.info("[_sync_and_apply_schedules] Passcode %s was deleted logically, pushing deletion to physical device", uid)
+                    try:
+                        await self.device.delete_passcode(uid)
+                        self.recently_deleted_passcodes[uid] = time.time()
+                        changed = True
+                    except Exception as e:
+                        logger.warning("Failed to delete recently deleted passcode %s from physical device: %s", uid, e)
                     continue
                 if uid not in self.logical_passcodes:
                     if getattr(self.device, "passcode_registration_mode", False):
@@ -609,8 +626,15 @@ class SesameDeviceWrapper:
                     changed = True
                     
             # Sync physical cards to logical
-            for uid, phys_info in physical_cards.items():
+            for uid, phys_info in list(physical_cards.items()):
                 if uid in self.recently_deleted_cards:
+                    logger.info("[_sync_and_apply_schedules] Card %s was deleted logically, pushing deletion to physical device", uid)
+                    try:
+                        await self.device.delete_card(uid)
+                        self.recently_deleted_cards[uid] = time.time()
+                        changed = True
+                    except Exception as e:
+                        logger.warning("Failed to delete recently deleted card %s from physical device: %s", uid, e)
                     continue
                 if uid not in self.logical_cards:
                     if getattr(self.device, "card_registration_mode", False):
@@ -637,8 +661,15 @@ class SesameDeviceWrapper:
                     changed = True
 
             # Sync physical fingerprints to logical
-            for uid, phys_info in physical_fingerprints.items():
+            for uid, phys_info in list(physical_fingerprints.items()):
                 if uid in self.recently_deleted_fingerprints:
+                    logger.info("[_sync_and_apply_schedules] Fingerprint %s was deleted logically, pushing deletion to physical device", uid)
+                    try:
+                        await self.device.delete_fingerprint(uid)
+                        self.recently_deleted_fingerprints[uid] = time.time()
+                        changed = True
+                    except Exception as e:
+                        logger.warning("Failed to delete recently deleted fingerprint %s from physical device: %s", uid, e)
                     continue
                 if uid not in self.logical_fingerprints:
                     if getattr(self.device, "fingerprint_registration_mode", False):
@@ -923,6 +954,115 @@ def resolve_target_lock(hass: HomeAssistant, target_id: str) -> "SesameDeviceWra
     return wrapper
 
 
+def resolve_passcode_uid(target_wrapper: "SesameDeviceWrapper", code_or_id: Any) -> str | None:
+    """Resolves a passcode PIN, UID, or numeric ID to the matching hex UID.
+
+    Checks logical_passcodes first (by UID, code, or zero-padded code/UID),
+    then checks device.passcodes, and falls back to byte-encoding or device._resolve_code.
+    """
+    if code_or_id is None:
+        return None
+
+    code_str = str(code_or_id).strip()
+    if not code_str:
+        return None
+
+    logical_passcodes = getattr(target_wrapper, "logical_passcodes", {}) if target_wrapper else {}
+    device = getattr(target_wrapper, "device", None) if target_wrapper else None
+    physical_passcodes = getattr(device, "passcodes", {}) if device else {}
+
+    # 1. Exact UID match in logical_passcodes
+    if code_str in logical_passcodes:
+        return code_str
+    for uid in logical_passcodes:
+        if uid.lower() == code_str.lower():
+            return uid
+
+    # 2. Exact match on 'code' field in logical_passcodes
+    for uid, info in logical_passcodes.items():
+        if isinstance(info, dict) and str(info.get("code", "")).strip() == code_str:
+            return uid
+
+    # 3. If numeric, check zero-padded variants in logical_passcodes
+    if code_str.isdigit():
+        padded_6 = code_str.zfill(6)
+        # Check 'code' matching padded_6
+        for uid, info in logical_passcodes.items():
+            if isinstance(info, dict) and str(info.get("code", "")).strip() == padded_6:
+                return uid
+        # Check UID matching padded_6 directly
+        if padded_6 in logical_passcodes:
+            return padded_6
+        for uid in logical_passcodes:
+            if uid.lower() == padded_6.lower():
+                return uid
+        # Check UID matching byte-hex representation of padded_6 (e.g. '072764' -> '000702070604')
+        padded_hex = bytes(int(c) for c in padded_6).hex()
+        if padded_hex in logical_passcodes:
+            return padded_hex
+        for uid in logical_passcodes:
+            if uid.lower() == padded_hex.lower():
+                return uid
+
+        # Check UID matching byte-hex of raw code_str (e.g. '1234' -> '01020304')
+        raw_hex = bytes(int(c) for c in code_str).hex()
+        if raw_hex in logical_passcodes:
+            return raw_hex
+        for uid in logical_passcodes:
+            if uid.lower() == raw_hex.lower():
+                return uid
+
+    # 4. Check active passcodes on physical device
+    if code_str in physical_passcodes:
+        return code_str
+    for uid in physical_passcodes:
+        if uid.lower() == code_str.lower():
+            return uid
+    for uid, info in physical_passcodes.items():
+        if isinstance(info, dict) and str(info.get("code", "")).strip() == code_str:
+            return uid
+
+    if code_str.isdigit():
+        padded_6 = code_str.zfill(6)
+        for uid, info in physical_passcodes.items():
+            if isinstance(info, dict) and str(info.get("code", "")).strip() == padded_6:
+                return uid
+        if padded_6 in physical_passcodes:
+            return padded_6
+        for uid in physical_passcodes:
+            if uid.lower() == padded_6.lower():
+                return uid
+        padded_hex = bytes(int(c) for c in padded_6).hex()
+        if padded_hex in physical_passcodes:
+            return padded_hex
+        for uid in physical_passcodes:
+            if uid.lower() == padded_hex.lower():
+                return uid
+        raw_hex = bytes(int(c) for c in code_str).hex()
+        if raw_hex in physical_passcodes:
+            return raw_hex
+        for uid in physical_passcodes:
+            if uid.lower() == raw_hex.lower():
+                return uid
+
+    # 5. Delegate to device._resolve_code if available and produces valid result
+    if hasattr(device, "_resolve_code"):
+        try:
+            res = device._resolve_code(code_str)
+            if isinstance(res, (bytes, bytearray)):
+                return res.hex()
+            if isinstance(res, str):
+                return res
+        except Exception:
+            pass
+
+    # 6. Fallback for numeric PIN
+    if code_str.isdigit():
+        return bytes(int(c) for c in code_str).hex()
+
+    return code_str
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Candy House Sesame BLE from a config entry."""
 
@@ -1205,35 +1345,65 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             target_wrapper: SesameDeviceWrapper = resolve_target_keypad(hass, target_id)
             sesame_touch: SesameKeypad = target_wrapper.device
 
-            if not sesame_touch.is_logged_in:
-                await target_wrapper.async_connect()
+            # Resolve the UID first before updating databases or attempting connection
+            resolved_uid = resolve_passcode_uid(target_wrapper, code_or_id)
+            target_code_or_id = resolved_uid or str(code_or_id).strip()
+
+            import time
+            now_ts = time.time()
+
+            # 1. Update logical database and storage immediately
+            if resolved_uid:
+                target_wrapper.recently_deleted_passcodes[resolved_uid] = now_ts
+                if resolved_uid in target_wrapper.logical_passcodes:
+                    del target_wrapper.logical_passcodes[resolved_uid]
+
+            raw_str = str(code_or_id).strip()
+            if raw_str in target_wrapper.logical_passcodes:
+                target_wrapper.recently_deleted_passcodes[raw_str] = now_ts
+                del target_wrapper.logical_passcodes[raw_str]
 
             try:
-                await sesame_touch.delete_passcode(code_or_id)
-                
-                # Update logical database immediately
-                resolved_uid = None
+                await target_wrapper.store.async_save({
+                    "passcodes": target_wrapper.logical_passcodes,
+                    "cards": target_wrapper.logical_cards,
+                    "fingerprints": target_wrapper.logical_fingerprints,
+                })
+            except Exception as store_err:
+                logger.error("Failed to save updated passcodes to storage: %s", store_err)
+
+            # 2. Attempt bounded connection if not already logged in
+            if not getattr(sesame_touch, "is_logged_in", False):
                 try:
-                    id_bytes = sesame_touch._resolve_code(code_or_id)
-                    resolved_uid = id_bytes.hex()
-                except Exception:
-                    pass
-                    
-                if resolved_uid:
-                    import time
-                    target_wrapper.recently_deleted_passcodes[resolved_uid] = time.time()
-                    if resolved_uid in target_wrapper.logical_passcodes:
-                        del target_wrapper.logical_passcodes[resolved_uid]
-                        await target_wrapper.store.async_save({
-                            "passcodes": target_wrapper.logical_passcodes,
-                            "cards": target_wrapper.logical_cards,
-                            "fingerprints": target_wrapper.logical_fingerprints
-                        })
-                
-                await sesame_touch.get_passcodes()
-                target_wrapper._handle_status_update(sesame_touch, sesame_touch.mech_status)
-            except Exception as ex:
-                raise HomeAssistantError(f"Failed to delete passcode: {ex}") from ex
+                    await asyncio.wait_for(target_wrapper.async_connect(), timeout=6.0)
+                except Exception as conn_err:
+                    logger.warning(
+                        "Keypad %s is offline or unreachable (%s); passcode %s will be deleted when reconnected",
+                        getattr(getattr(target_wrapper, "ble_device", None), "address", getattr(target_wrapper, "model_name", "keypad")),
+                        conn_err,
+                        target_code_or_id,
+                    )
+
+            # 3. If connected and logged in, delete from physical device with bounded timeout
+            if getattr(sesame_touch, "is_logged_in", False):
+                try:
+                    await asyncio.wait_for(sesame_touch.delete_passcode(target_code_or_id), timeout=6.0)
+                    try:
+                        await asyncio.wait_for(sesame_touch.get_passcodes(), timeout=6.0)
+                    except Exception as refresh_err:
+                        logger.debug("Failed to refresh passcodes after deletion: %s", refresh_err)
+                except Exception as del_err:
+                    logger.warning(
+                        "Keypad was connected but failed to delete passcode %s immediately (%s); sync will retry on reconnect",
+                        target_code_or_id,
+                        del_err,
+                    )
+
+            # 4. Notify UI / entity listeners of state update
+            try:
+                target_wrapper._handle_status_update(sesame_touch, getattr(sesame_touch, "mech_status", None))
+            except Exception:
+                pass
 
         async def handle_update_passcode(call: ServiceCall) -> None:
             """Service to rename a passcode on a Sesame Touch."""
@@ -1245,22 +1415,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             sesame_touch: SesameKeypad = target_wrapper.device
 
             # Check for duplicate passcode name
-            resolved_uid = None
-            try:
-                id_bytes = sesame_touch._resolve_code(code_or_id)
-                resolved_uid = id_bytes.hex()
-            except Exception:
-                pass
+            resolved_uid = resolve_passcode_uid(target_wrapper, code_or_id)
+            target_code_or_id = resolved_uid or str(code_or_id).strip()
 
             for other_uid, other_info in target_wrapper.logical_passcodes.items():
                 if other_uid != resolved_uid and other_info["name"].strip().lower() == name.lower():
                     raise HomeAssistantError(f"A passcode named '{name}' already exists")
 
-            if not sesame_touch.is_logged_in:
-                await target_wrapper.async_connect()
+            if not getattr(sesame_touch, "is_logged_in", False):
+                try:
+                    await asyncio.wait_for(target_wrapper.async_connect(), timeout=6.0)
+                except Exception as conn_err:
+                    logger.warning("Failed to connect to keypad for passcode update: %s", conn_err)
 
             try:
-                await sesame_touch.update_passcode_name(code_or_id, name)
+                if getattr(sesame_touch, "is_logged_in", False):
+                    await asyncio.wait_for(sesame_touch.update_passcode_name(target_code_or_id, name), timeout=6.0)
                 
                 # Update logical database immediately
                 if resolved_uid and resolved_uid in target_wrapper.logical_passcodes:
@@ -1271,8 +1441,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "fingerprints": target_wrapper.logical_fingerprints
                     })
                 
-                await sesame_touch.get_passcodes()
-                target_wrapper._handle_status_update(sesame_touch, sesame_touch.mech_status)
+                if getattr(sesame_touch, "is_logged_in", False):
+                    try:
+                        await asyncio.wait_for(sesame_touch.get_passcodes(), timeout=6.0)
+                    except Exception:
+                        pass
+                target_wrapper._handle_status_update(sesame_touch, getattr(sesame_touch, "mech_status", None))
             except Exception as ex:
                 raise HomeAssistantError(f"Failed to update passcode name: {ex}") from ex
 

@@ -1332,20 +1332,31 @@ class SesameKeypad(SesameDevice, BaseKeypad):
 
     def _resolve_code(self, code_or_id: str) -> bytes:
         """Resolves raw digits (e.g. '1234') or Hex ID string (e.g. '01020304') to bytes."""
-        if code_or_id in self.passcodes:
-            return bytes.fromhex(code_or_id)
+        code_str = str(code_or_id).strip()
+        if code_str in self.passcodes:
+            return bytes.fromhex(code_str)
+
+        for uid, info in self.passcodes.items():
+            if isinstance(info, dict):
+                c = str(info.get("code", "")).strip()
+                if c == code_str or (code_str.isdigit() and c == code_str.zfill(6)):
+                    return bytes.fromhex(uid)
 
         # Hex heuristic: even length, min 8, and format matches '0X0X0X...'
         if (
-            len(code_or_id) % 2 == 0
-            and len(code_or_id) >= 8
-            and all(code_or_id[i] == "0" for i in range(0, len(code_or_id), 2))
-            and all(code_or_id[i].isdigit() for i in range(1, len(code_or_id), 2))
+            len(code_str) % 2 == 0
+            and len(code_str) >= 8
+            and all(code_str[i] == "0" for i in range(0, len(code_str), 2))
+            and all(code_str[i].isdigit() for i in range(1, len(code_str), 2))
         ):
-            return bytes.fromhex(code_or_id)
+            return bytes.fromhex(code_str)
 
-        if code_or_id.isdigit():
-            return bytes(int(c) for c in code_or_id)
+        if code_str.isdigit():
+            padded_6 = code_str.zfill(6)
+            padded_hex = bytes(int(c) for c in padded_6).hex()
+            if padded_hex in self.passcodes:
+                return bytes.fromhex(padded_hex)
+            return bytes(int(c) for c in code_str)
 
         raise ValueError(f"Invalid passcode formatting: {code_or_id}")
 

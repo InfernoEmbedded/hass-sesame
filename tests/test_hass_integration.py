@@ -1513,6 +1513,319 @@ async def test_options_flow():
     assert result2["data"][CONF_COGNITO_POOL_ID] == "new_cognito_pool"
 
 
+@pytest.mark.asyncio
+async def test_resolve_passcode_uid():
+    """Unit test for resolve_passcode_uid helper."""
+    from custom_components.sesame_ble import resolve_passcode_uid
+
+    wrapper = MagicMock()
+    wrapper.logical_passcodes = {
+        "000702070604": {"name": "Leading Zero PIN", "code": "072764"},
+        "01020304": {"name": "Standard PIN", "code": "1234"},
+    }
+    wrapper.device.passcodes = {}
+
+    # 1. Exact UID match
+    assert resolve_passcode_uid(wrapper, "000702070604") == "000702070604"
+    assert resolve_passcode_uid(wrapper, "01020304") == "01020304"
+
+    # 2. Exact code match
+    assert resolve_passcode_uid(wrapper, "072764") == "000702070604"
+    assert resolve_passcode_uid(wrapper, "1234") == "01020304"
+
+    # 3. Numeric PIN without leading zero (integer or string)
+    assert resolve_passcode_uid(wrapper, 72764) == "000702070604"
+    assert resolve_passcode_uid(wrapper, "72764") == "000702070604"
+
+    # 4. Device fallback when not in logical_passcodes
+    wrapper.logical_passcodes = {}
+    wrapper.device.passcodes = {
+        "000702070604": {"name": "Hardware PIN", "code": "072764"}
+    }
+    assert resolve_passcode_uid(wrapper, 72764) == "000702070604"
+    assert resolve_passcode_uid(wrapper, "072764") == "000702070604"
+
+
+@pytest.mark.asyncio
+async def test_delete_passcode_when_device_disconnected():
+    """Verify deleting a passcode when the device is disconnected still updates logical_passcodes immediately, saves to store, and returns cleanly."""
+    import struct
+    from uuid import UUID
+    import sesame_ble
+    from bleak_retry_connector import BleakOutOfConnectionSlotsError
+
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+    hass.services.async_register = MagicMock()
+
+    keypad_entry_id = "test_keypad_disconnected"
+    keypad_entry = MagicMock()
+    keypad_entry.entry_id = keypad_entry_id
+    keypad_entry.unique_id = "keypad_mac_disconnected"
+    keypad_entry.data = {
+        "mac_address": "DE:34:B7:06:2E:57",
+        CONF_SECRET_KEY: "8934fa89504ea1b70993b91ff4407aa9",
+        CONF_MODEL: "SESAME_TOUCH_2_PRO",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    with patch("sesame_ble.bluetooth") as mock_bluetooth, \
+         patch.object(sesame_ble.SesameDeviceWrapper, "_async_connect_background", new_callable=AsyncMock):
+        mock_ble_device = MagicMock()
+        mock_ble_device.address = "DE:34:B7:06:2E:57"
+        mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+        mfg_data = struct.pack("<HB16s", 26, 1, TEST_UUID.bytes)
+        mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+        await sesame_ble.async_setup_entry(hass, keypad_entry)
+
+    keypad_wrapper = hass.data[DOMAIN][keypad_entry_id]
+    if keypad_wrapper.scheduler_task:
+        keypad_wrapper.scheduler_task.cancel()
+
+    mock_keypad_dev = MagicMock(spec=sesame_ble.SesameKeypad)
+    mock_keypad_dev.mac_address = "DE:34:B7:06:2E:57"
+    mock_keypad_dev._reconnect_limit = 0
+    mock_keypad_dev._reconnect_task = None
+    mock_keypad_dev._auto_reconnect_paused = False
+    mock_keypad_dev.is_connected = False
+    mock_keypad_dev.is_logged_in = False
+    mock_keypad_dev.passcodes = {}
+    mock_keypad_dev.cards = {}
+    mock_keypad_dev.fingerprints = {}
+    mock_keypad_dev.faces = {}
+    mock_keypad_dev.palms = {}
+    mock_keypad_dev.paired_locks = []
+    mock_keypad_dev.delete_passcode = AsyncMock()
+    mock_keypad_dev.get_passcodes = AsyncMock()
+    mock_keypad_dev.get_cards = AsyncMock()
+    mock_keypad_dev.get_fingerprints = AsyncMock()
+    mock_keypad_dev.apply_passcode_schedules = AsyncMock(return_value=False)
+    mock_keypad_dev.mech_status = None
+
+    keypad_wrapper.device = mock_keypad_dev
+    keypad_wrapper.store = AsyncMock()
+    keypad_wrapper.logical_passcodes = {
+        "01020304": {
+            "name": "Guest PIN",
+            "code": "1234",
+        }
+    }
+    keypad_wrapper.recently_deleted_passcodes = {}
+
+    # Simulate async_connect raising BleakOutOfConnectionSlotsError / connection failure
+    keypad_wrapper.async_connect = AsyncMock(side_effect=BleakOutOfConnectionSlotsError("No slots available"))
+
+    del_handler = None
+    for call_args in hass.services.async_register.call_args_list:
+        if call_args[0][1] == "delete_passcode":
+            del_handler = call_args[0][2]
+
+    assert del_handler is not None
+
+    del_call = MagicMock()
+    del_call.data = {
+        "device_id": keypad_entry_id,
+        "passcode_or_id": "1234",
+    }
+
+    # Should succeed without raising unhandled exception
+    await del_handler(del_call)
+
+    # 1. logical_passcodes updated immediately
+    assert "01020304" not in keypad_wrapper.logical_passcodes
+
+    # 2. saved to store immediately
+    keypad_wrapper.store.async_save.assert_awaited()
+
+    # 3. recorded in recently_deleted_passcodes
+    assert "01020304" in keypad_wrapper.recently_deleted_passcodes
+
+    # 4. Device delete_passcode was not called while offline
+    mock_keypad_dev.delete_passcode.assert_not_called()
+
+    # 5. Now simulate device reconnecting and _sync_and_apply_schedules running
+    mock_keypad_dev.is_connected = True
+    mock_keypad_dev.is_logged_in = True
+    mock_keypad_dev.passcodes = {
+        "01020304": {"code": "1234", "name": "Guest PIN"}
+    }
+    await keypad_wrapper._sync_and_apply_schedules()
+
+    # Deletion pushed to physical device on reconnect!
+    mock_keypad_dev.delete_passcode.assert_awaited_once_with("01020304")
+    # Not re-added to logical_passcodes
+    assert "01020304" not in keypad_wrapper.logical_passcodes
+
+
+@pytest.mark.asyncio
+async def test_delete_passcode_leading_zero_and_numeric_id_resolution():
+    """Verify that deleting a passcode with leading zeros or numeric int resolves properly to the 6-byte UID."""
+    import struct
+    from uuid import UUID
+    import sesame_ble
+
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+    hass.services.async_register = MagicMock()
+
+    keypad_entry_id = "test_keypad_leading_zero"
+    keypad_entry = MagicMock()
+    keypad_entry.entry_id = keypad_entry_id
+    keypad_entry.unique_id = "keypad_mac_leading_zero"
+    keypad_entry.data = {
+        "mac_address": "DE:34:B7:06:2E:58",
+        CONF_SECRET_KEY: "8934fa89504ea1b70993b91ff4407aa9",
+        CONF_MODEL: "SESAME_TOUCH_2_PRO",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    with patch("sesame_ble.bluetooth") as mock_bluetooth, \
+         patch.object(sesame_ble.SesameDeviceWrapper, "_async_connect_background", new_callable=AsyncMock):
+        mock_ble_device = MagicMock()
+        mock_ble_device.address = "DE:34:B7:06:2E:58"
+        mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+        mfg_data = struct.pack("<HB16s", 26, 1, TEST_UUID.bytes)
+        mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+        await sesame_ble.async_setup_entry(hass, keypad_entry)
+
+    keypad_wrapper = hass.data[DOMAIN][keypad_entry_id]
+    if keypad_wrapper.scheduler_task:
+        keypad_wrapper.scheduler_task.cancel()
+
+    mock_keypad_dev = MagicMock()
+    mock_keypad_dev.is_connected = True
+    mock_keypad_dev.is_logged_in = True
+    # 6-digit passcode "072764" -> bytes [0, 7, 2, 7, 6, 4] -> hex UID "000702070604"
+    pin_code = "072764"
+    expected_uid = bytes([0, 7, 2, 7, 6, 4]).hex()  # "000702070604"
+    mock_keypad_dev.passcodes = {
+        expected_uid: {"code": pin_code, "name": "Leading Zero PIN"}
+    }
+    mock_keypad_dev.delete_passcode = AsyncMock()
+    mock_keypad_dev.get_passcodes = AsyncMock()
+    mock_keypad_dev.mech_status = None
+
+    keypad_wrapper.device = mock_keypad_dev
+    keypad_wrapper.store = AsyncMock()
+    keypad_wrapper.logical_passcodes = {
+        expected_uid: {
+            "name": "Leading Zero PIN",
+            "code": pin_code,
+        }
+    }
+    keypad_wrapper.recently_deleted_passcodes = {}
+
+    del_handler = None
+    for call_args in hass.services.async_register.call_args_list:
+        if call_args[0][1] == "delete_passcode":
+            del_handler = call_args[0][2]
+
+    assert del_handler is not None
+
+    # Call with integer 72764 (simulating caller without leading zeros)
+    del_call = MagicMock()
+    del_call.data = {
+        "device_id": keypad_entry_id,
+        "passcode_or_id": 72764,
+    }
+
+    await del_handler(del_call)
+
+    # 1. logical_passcodes updated immediately with correct UID
+    assert expected_uid not in keypad_wrapper.logical_passcodes
+
+    # 2. saved to store immediately
+    keypad_wrapper.store.async_save.assert_awaited()
+
+    # 3. recently_deleted_passcodes has expected_uid
+    assert expected_uid in keypad_wrapper.recently_deleted_passcodes
+
+    # 4. physical deletion called with resolved UID "000702070604" (NOT 5-byte "0702070604")
+    mock_keypad_dev.delete_passcode.assert_awaited_once_with(expected_uid)
+
+
+@pytest.mark.asyncio
+async def test_delete_passcode_connection_timeout_bounded():
+    """Verify that handle_delete_passcode connection timeout is bounded and does not hang."""
+    import struct
+    import asyncio
+    from uuid import UUID
+    import sesame_ble
+
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+    hass.services.async_register = MagicMock()
+
+    keypad_entry_id = "test_keypad_timeout"
+    keypad_entry = MagicMock()
+    keypad_entry.entry_id = keypad_entry_id
+    keypad_entry.unique_id = "keypad_mac_timeout"
+    keypad_entry.data = {
+        "mac_address": "DE:34:B7:06:2E:59",
+        CONF_SECRET_KEY: "8934fa89504ea1b70993b91ff4407aa9",
+        CONF_MODEL: "SESAME_TOUCH_2_PRO",
+        CONF_DEVICE_UUID: str(TEST_UUID),
+    }
+
+    with patch("sesame_ble.bluetooth") as mock_bluetooth, \
+         patch.object(sesame_ble.SesameDeviceWrapper, "_async_connect_background", new_callable=AsyncMock):
+        mock_ble_device = MagicMock()
+        mock_ble_device.address = "DE:34:B7:06:2E:59"
+        mock_bluetooth.async_ble_device_from_address.return_value = mock_ble_device
+        mfg_data = struct.pack("<HB16s", 26, 1, TEST_UUID.bytes)
+        mock_bluetooth.async_get_advertisement_data.return_value = MockAdvertisementData(mfg_data)
+        await sesame_ble.async_setup_entry(hass, keypad_entry)
+
+    keypad_wrapper = hass.data[DOMAIN][keypad_entry_id]
+    if keypad_wrapper.scheduler_task:
+        keypad_wrapper.scheduler_task.cancel()
+
+    mock_keypad_dev = MagicMock()
+    mock_keypad_dev.is_connected = False
+    mock_keypad_dev.is_logged_in = False
+    mock_keypad_dev.passcodes = {}
+    mock_keypad_dev.delete_passcode = AsyncMock()
+    mock_keypad_dev.mech_status = None
+
+    keypad_wrapper.device = mock_keypad_dev
+    keypad_wrapper.store = AsyncMock()
+    keypad_wrapper.logical_passcodes = {
+        "01020304": {"name": "Test", "code": "1234"}
+    }
+    keypad_wrapper.recently_deleted_passcodes = {}
+
+    del_handler = None
+    for call_args in hass.services.async_register.call_args_list:
+        if call_args[0][1] == "delete_passcode":
+            del_handler = call_args[0][2]
+
+    del_call = MagicMock()
+    del_call.data = {
+        "device_id": keypad_entry_id,
+        "passcode_or_id": "1234",
+    }
+
+    # Patch asyncio.wait_for to simulate timeout during async_connect
+    original_wait_for = asyncio.wait_for
+
+    async def fake_wait_for(fut, timeout):
+        if timeout == 6.0:
+            if asyncio.iscoroutine(fut):
+                fut.close()
+            raise asyncio.TimeoutError()
+        return await original_wait_for(fut, timeout)
+
+    with patch("asyncio.wait_for", side_effect=fake_wait_for):
+        await del_handler(del_call)
+
+    assert "01020304" not in keypad_wrapper.logical_passcodes
+    assert "01020304" in keypad_wrapper.recently_deleted_passcodes
+    keypad_wrapper.store.async_save.assert_awaited()
+
+
 
 
 
