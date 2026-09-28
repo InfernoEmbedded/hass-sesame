@@ -25,7 +25,7 @@ from custom_components.sesame_ble.firmware import (
     _firmware_version_cache,
     _cached_credentials,
 )
-from custom_components.sesame_ble.sesame_client import ProductModels
+from pysesame_ble import ProductModels
 
 
 def test_get_product_type_id():

@@ -18,11 +18,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-# Insert the custom_components/sesame_ble directory into sys.path to resolve sesame_client imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "custom_components/sesame_ble")))
-
 try:
-    from sesame_client import (
+    from pysesame_ble import (
         ProductModels,
         SesameAdData,
         SesameQRCode,

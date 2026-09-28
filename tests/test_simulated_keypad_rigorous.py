@@ -10,7 +10,7 @@ from sesame_sim.device_firmware import (
     SimulatedSesameTouch2Pro,
 )
 from sesame_sim.ble_bridge import VirtualBleakClient, VirtualBLEDevice
-from custom_components.sesame_ble.sesame_client.device import (
+from pysesame_ble import (
     SesameAdData,
     SesameKeypad,
 )

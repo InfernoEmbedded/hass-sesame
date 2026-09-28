@@ -8,7 +8,7 @@ from uuid import UUID
 import bleak_retry_connector
 from sesame_sim.device_firmware import SimulatedSesame5USA
 from sesame_sim.ble_bridge import VirtualBleakClient, VirtualBLEDevice
-from custom_components.sesame_ble.sesame_client.device import (
+from pysesame_ble import (
     SesameAdData,
     SesameLock,
     ProductModels,

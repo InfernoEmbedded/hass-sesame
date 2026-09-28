@@ -23,7 +23,7 @@ from .const import (
     DOMAIN,
 )
 from . import firmware
-from .sesame_client import (
+from pysesame_ble import (
     COMPANY_ID,
     ProductModels,
     SesameAdData,
@@ -720,7 +720,7 @@ class SesameDeviceWrapper:
             from urllib import parse
             from uuid import UUID
             from .const import CONF_SECRET_KEY, CONF_DEVICE_UUID
-            from .sesame_client import SesameQRCode, ProductModels
+            from pysesame_ble import SesameQRCode, ProductModels
 
             secret_hex = self.entry.data.get(CONF_SECRET_KEY, "")
             if not secret_hex:

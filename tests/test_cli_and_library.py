@@ -1,4 +1,4 @@
-"""Unit tests for sesame_client library helpers and sesame_cli."""
+"""Unit tests for pysesame_ble library helpers and sesame_cli."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from sesame_ble.sesame_client import (
+from pysesame_ble import (
     ProductModels,
     SesameAdData,
     SesameLock,
@@ -84,7 +84,7 @@ async def test_scan_sesame_devices() -> None:
     mock_scanner_instance.start = AsyncMock()
     mock_scanner_instance.stop = AsyncMock()
 
-    with patch("sesame_ble.sesame_client.device.BleakScanner") as mock_scanner_cls:
+    with patch("pysesame_ble.device.BleakScanner") as mock_scanner_cls:
         mock_scanner_cls.return_value = mock_scanner_instance
 
         cb_calls = []
@@ -134,7 +134,13 @@ async def test_find_sesame_device() -> None:
         "11:22:33:44:55:66": (mock_dev, mock_adv),
     }
 
-    with patch("sesame_ble.sesame_client.device.BleakScanner") as mock_scanner_cls:
+    with patch("pysesame_ble.device.BleakScanner") as mock_scanner_cls:
+        async def mock_start():
+            cb = mock_scanner_cls.call_args.kwargs.get("detection_callback")
+            if cb:
+                cb(mock_dev, mock_adv)
+
+        mock_scanner_instance.start = AsyncMock(side_effect=mock_start)
         mock_scanner_cls.return_value = mock_scanner_instance
         result = await find_sesame_device("11:22:33:44:55:66", timeout=0.1)
 

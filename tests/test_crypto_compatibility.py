@@ -1,8 +1,10 @@
 import pytest
 from Crypto.PublicKey import ECC
 
+from cryptography.hazmat.primitives.asymmetric import ec
+
 # Import local custom component modules
-from sesame_ble.sesame_client.crypto import (
+from pysesame_ble.crypto import (
     SesameCipher,
     generate_ecc_keypair,
     derive_device_secret,
@@ -15,14 +17,13 @@ from gomalock import os3_cipher
 
 def test_generate_ecc_keypair_properties() -> None:
     """Verifies that generated ECC keys have the same structure and size as gomalock."""
-    # 1. Custom component key generation
+    # 1. Custom component key generation (cryptography)
     pubkey_raw, privkey = generate_ecc_keypair()
     assert len(pubkey_raw) == 64
-    assert isinstance(privkey, ECC.EccKey)
-    assert privkey.curve == "NIST P-256"
-    assert privkey.has_private()
+    assert isinstance(privkey, ec.EllipticCurvePrivateKey)
+    assert privkey.curve.name == "secp256r1"
 
-    # 2. Gomalock key generation
+    # 2. Gomalock key generation (pycryptodome)
     g_pubkey_raw, g_privkey = os3_cipher.generate_app_keys()
     assert len(g_pubkey_raw) == 64
     assert isinstance(g_privkey, ECC.EccKey)
@@ -34,24 +35,15 @@ def test_derive_device_secret_compatibility() -> None:
     """Verifies that ECDH shared secret derivation matches between custom component and gomalock."""
     # Generate keys
     app_pub_raw, app_priv = generate_ecc_keypair()
-    dev_pub_raw, dev_priv = generate_ecc_keypair()
+    g_pub_raw, g_priv = os3_cipher.generate_app_keys()
 
-    # Derive shared secret using custom component method
-    secret_custom = derive_device_secret(dev_pub_raw, app_priv)
-
-    # Derive shared secret using gomalock method
-    secret_gomalock = os3_cipher.generate_device_secret_key(dev_pub_raw, app_priv)
+    # Cross-derive shared secret between cryptography and pycryptodome
+    secret_custom = derive_device_secret(g_pub_raw, app_priv)
+    secret_gomalock = os3_cipher.generate_device_secret_key(app_pub_raw, g_priv)
 
     # Assert outputs are identical
     assert len(secret_custom) == 16
     assert secret_custom == secret_gomalock
-
-    # Symmetric verification using other private key
-    secret_custom_symm = derive_device_secret(app_pub_raw, dev_priv)
-    secret_gomalock_symm = os3_cipher.generate_device_secret_key(app_pub_raw, dev_priv)
-
-    assert secret_custom == secret_custom_symm
-    assert secret_gomalock == secret_gomalock_symm
 
 
 def test_derive_session_key_compatibility() -> None:

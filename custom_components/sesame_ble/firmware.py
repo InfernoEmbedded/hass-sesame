@@ -15,10 +15,7 @@ import zipfile
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlparse
 
-try:
-    from .sesame_client import ProductModels
-except (ImportError, ValueError):
-    from custom_components.sesame_ble.sesame_client import ProductModels
+from pysesame_ble import ProductModels
 
 logger = logging.getLogger(__name__)
 

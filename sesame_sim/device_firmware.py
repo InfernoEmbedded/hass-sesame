@@ -8,7 +8,7 @@ import time
 from typing import Callable
 from .mcu import CortexM4Emulator
 from .rom_hle import OnMicroRomHLE
-from custom_components.sesame_ble.sesame_client.crypto import SesameCipher, derive_session_token_key
+from pysesame_ble.crypto import SesameCipher, derive_session_token_key
 
 logger = logging.getLogger(__name__)
 

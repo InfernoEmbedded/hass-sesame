@@ -13,7 +13,7 @@ import sesame_ble.button
 import sesame_ble.number
 
 from sesame_ble.const import DOMAIN, CONF_SECRET_KEY, CONF_MODEL, CONF_DEVICE_UUID
-from sesame_ble.sesame_client import COMPANY_ID, ProductModels, SesameAdData
+from pysesame_ble import COMPANY_ID, ProductModels, SesameAdData
 
 TEST_UUID = UUID("01234567-89ab-cdef-0123-456789abcdef")
 
@@ -307,7 +307,7 @@ class MockAdvertisementData:
 
 import datetime
 from sesame_ble import BaseKeypad
-from sesame_ble.sesame_client import SesameKeypad
+from pysesame_ble import SesameKeypad
 from sesame_ble.views import SesamePasscodesView, SesameCardsView, SesameFingerprintsView
 
 
@@ -738,7 +738,7 @@ async def test_api_pairing_and_history_views():
 @pytest.mark.asyncio
 async def test_passcode_schedules_weekly_and_daily():
     """Test weekly days and daily time range schedule evaluations in BaseKeypad."""
-    from sesame_ble.sesame_client.device import BaseKeypad
+    from pysesame_ble.device import BaseKeypad
     import datetime
 
     class MockKeypad(BaseKeypad):
@@ -870,7 +870,7 @@ async def test_otp_detection_and_deletion():
 @pytest.mark.asyncio
 async def test_fetch_and_flush_history_variable_lengths():
     """Test SesameDevice.fetch_and_flush_history with variable payload lengths."""
-    from sesame_ble.sesame_client.device import SesameLock, ITEM_HISTORY, ITEM_HISTORY_DELETE
+    from pysesame_ble import SesameLock, ITEM_HISTORY, ITEM_HISTORY_DELETE
     
     mock_ble = MagicMock()
     mock_ble.address = "AA:BB:CC:DD:EE:FF"

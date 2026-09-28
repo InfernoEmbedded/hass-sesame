@@ -2,16 +2,14 @@ import struct
 from uuid import UUID
 import pytest
 
-# Import local custom component modules
-from sesame_ble.sesame_client.device import (
+# Import pysesame_ble library modules
+from pysesame_ble import (
     calculate_battery_percentage,
     SesameAdData,
     SesameQRCode,
     SesameSegmentLayer,
     SesameLock,
     SesameKeypad,
-)
-from sesame_ble.sesame_client.crypto import (
     generate_ecc_keypair,
     derive_device_secret,
 )
@@ -243,11 +241,11 @@ def test_registration_crypto_compatibility() -> None:
     # Generate a device keypair using gomalock
     dev_pub_gomalock, dev_priv_gomalock = generate_app_keys()
 
-    # Derive secret key using custom client with the app private key and device public key
+    # Derive secret key using pysesame_ble with the app private key and device public key
     secret_custom = derive_device_secret(dev_pub_gomalock, priv_custom)
-    
-    # Derive secret key using gomalock with the same keys
-    secret_gomalock = generate_device_secret_key(dev_pub_gomalock, priv_custom)
+
+    # Derive secret key using gomalock with gomalock private key and pysesame_ble public key
+    secret_gomalock = generate_device_secret_key(pub_custom, dev_priv_gomalock)
 
     assert secret_custom == secret_gomalock
     assert len(secret_custom) == 16
@@ -255,7 +253,7 @@ def test_registration_crypto_compatibility() -> None:
 
 def test_keypad_multiple_passcodes_parsing() -> None:
     """Verifies that SesameKeypad parses multiple packed passcodes in a single notify packet."""
-    from sesame_ble.sesame_client import SesameKeypad, SesameAdData
+    from pysesame_ble import SesameKeypad, SesameAdData
     from uuid import UUID
     mock_ad = SesameAdData(model_id=26, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))
     keypad = SesameKeypad(ble_device=None, ad_data=mock_ad)
@@ -284,7 +282,7 @@ def test_keypad_multiple_passcodes_parsing() -> None:
 
 def test_sesame6_protocol_compatibility() -> None:
     """Verifies that Sesame 6 and 6 Pro advertisement payloads and models parse correctly."""
-    from sesame_ble.sesame_client import ProductModels, SesameAdData
+    from pysesame_ble import ProductModels, SesameAdData
     from uuid import UUID
 
     test_uuid = UUID("11223344-5566-7788-9900-aabbccddeeff")
@@ -328,7 +326,7 @@ def test_sesame6_protocol_compatibility() -> None:
 
 def test_biometric_face_and_palm_payload_parsing() -> None:
     """Verifies that 9-byte MECH_STATUS and Face/Palm packets parse correctly on SesameKeypad."""
-    from sesame_ble.sesame_client import (
+    from pysesame_ble import (
         SesameKeypad,
         SesameAdData,
         ITEM_MECH_STATUS,
@@ -384,7 +382,7 @@ def test_biometric_face_and_palm_payload_parsing() -> None:
 
 def test_touch_2_pro_mech_status_payload() -> None:
     """Verifies that 9-byte MECH_STATUS parses correctly on Sesame Touch 2 Pro (model 26)."""
-    from sesame_ble.sesame_client import (
+    from pysesame_ble import (
         SesameKeypad,
         SesameAdData,
         ProductModels,
@@ -421,7 +419,7 @@ def test_touch_2_pro_mech_status_payload() -> None:
 async def test_request_firmware_version() -> None:
     """Verifies that request_firmware_version requests ITEM_VERSION_TAG and decodes the version string."""
     from unittest.mock import AsyncMock
-    from sesame_ble.sesame_client import SesameLock, SesameAdData, ProductModels, ITEM_VERSION_TAG
+    from pysesame_ble import SesameLock, SesameAdData, ProductModels, ITEM_VERSION_TAG
     from uuid import UUID
 
     mock_ad = SesameAdData(model_id=ProductModels.SESAME5.value, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))
@@ -439,7 +437,7 @@ async def test_request_firmware_version() -> None:
 async def test_enable_dfu() -> None:
     """Verifies that enable_dfu sends ITEM_ENABLE_DFU without waiting for response."""
     from unittest.mock import AsyncMock
-    from sesame_ble.sesame_client import SesameLock, SesameAdData, ProductModels, ITEM_ENABLE_DFU
+    from pysesame_ble import SesameLock, SesameAdData, ProductModels, ITEM_ENABLE_DFU
     from uuid import UUID
 
     mock_ad = SesameAdData(model_id=ProductModels.SESAME5.value, is_registered=True, device_uuid=UUID("00000000-0000-0000-0000-000000000000"))

@@ -12,7 +12,7 @@ import sesame_ble.button
 import sesame_ble.number
 import sesame_ble.select
 from sesame_ble.const import DOMAIN, CONF_SECRET_KEY, CONF_MODEL, CONF_DEVICE_UUID
-from sesame_ble.sesame_client import COMPANY_ID, ProductModels, SesameAdData
+from pysesame_ble import COMPANY_ID, ProductModels, SesameAdData
 
 TEST_UUID = UUID("01234567-89ab-cdef-0123-456789abcdef")
 

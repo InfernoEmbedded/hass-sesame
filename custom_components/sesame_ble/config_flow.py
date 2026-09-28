@@ -29,8 +29,14 @@ from .const import (
     CONF_DEVICE_UUID,
     DOMAIN,
 )
-from .sesame_client import COMPANY_ID, ProductModels, SesameQRCode, SesameAdData, get_sesame_mfg_data
-from .sesame_client.device import SesameDevice
+from pysesame_ble import (
+    COMPANY_ID,
+    ProductModels,
+    SesameAdData,
+    SesameDevice,
+    SesameQRCode,
+    get_sesame_mfg_data,
+)
 
 logger = logging.getLogger(__name__)
 

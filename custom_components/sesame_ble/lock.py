@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .__init__ import SesameDeviceWrapper, is_keypad_model
-from .sesame_client import SesameLock
+from pysesame_ble import SesameLock
 
 logger = logging.getLogger(__name__)
 

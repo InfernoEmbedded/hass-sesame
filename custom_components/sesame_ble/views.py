@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN
 from . import SesameDeviceWrapper, parse_datetime, is_keypad_model, get_supported_auth_methods
 
-from .sesame_client import BaseKeypad
+from pysesame_ble import BaseKeypad
 
 
 

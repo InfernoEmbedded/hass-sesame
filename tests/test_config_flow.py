@@ -6,7 +6,7 @@ from uuid import UUID
 from homeassistant.helpers.device_registry import format_mac
 from sesame_ble.config_flow import SesameBLEConfigFlow
 from sesame_ble.const import CONF_MODEL, CONF_QR_URL, CONF_SECRET_KEY, CONF_DEVICE_UUID, DOMAIN
-from sesame_ble.sesame_client import COMPANY_ID, ProductModels, SesameQRCode, SesameAdData
+from pysesame_ble import COMPANY_ID, ProductModels, SesameQRCode, SesameAdData
 
 TEST_UUID = UUID("01234567-89ab-cdef-0123-456789abcdef")
 
