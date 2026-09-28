@@ -188,3 +188,23 @@ unpair_lock:
       example: "01234567-89ab-cdef-0123-456789abcdef"
       selector:
         text:
+
+sync_keypad:
+  name: Sync Keypad Credentials
+  description: Connects to a Sesame Keypad on demand to synchronize credentials (passcodes, cards, fingerprints) and update battery status.
+  fields:
+    device_id:
+      name: Keypad (Device or Entity)
+      description: The Sesame Keypad device ID or entity ID (such as sensor.*_registered_passcodes or lock.*).
+      required: false
+      example: "sensor.sesame_touch_pro_registered_passcodes"
+      selector:
+        text:
+    entity_id:
+      name: Target Entity
+      description: Optional entity ID of the keypad.
+      required: false
+      selector:
+        entity:
+          integration: sesame_ble
+

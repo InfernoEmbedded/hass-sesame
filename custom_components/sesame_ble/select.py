@@ -13,8 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from . import SesameDeviceWrapper, is_keypad_model
-
+from . import SesameDeviceWrapper, is_keypad_model, on_demand_connection
 
 
 logger = logging.getLogger(__name__)
@@ -35,16 +34,20 @@ async def async_setup_entry(
         logger.debug("Skipping select setup for Sesame Lock device %s", entry.unique_id)
         return
 
-    async_add_entities([
-        SesameTouchPairLockSelect(wrapper),
-        SesameTouchUnpairLockSelect(wrapper),
-    ])
+    async_add_entities(
+        [
+            SesameTouchPairLockSelect(wrapper),
+            SesameTouchUnpairLockSelect(wrapper),
+        ]
+    )
 
 
 class SesameTouchBaseSelect(SelectEntity):
     """Base class for Sesame Touch selects."""
 
-    def __init__(self, wrapper: SesameDeviceWrapper, name_suffix: str, unique_id_suffix: str) -> None:
+    def __init__(
+        self, wrapper: SesameDeviceWrapper, name_suffix: str, unique_id_suffix: str
+    ) -> None:
         """Initialize the select entity."""
         self.wrapper = wrapper
         self.device = wrapper.device
@@ -67,7 +70,9 @@ class SesameTouchBaseSelect(SelectEntity):
 
     @property
     def available(self) -> bool:
-        """Return true if the device is connected and logged in."""
+        """Return true if the device is connected or available via BLE advertisements."""
+        if is_keypad_model(self.wrapper.model_name):
+            return self.wrapper.is_available
         return self.device.is_logged_in
 
     @property
@@ -92,19 +97,19 @@ class SesameTouchPairLockSelect(SesameTouchBaseSelect):
     @property
     def options(self) -> list[str]:
         """Return the list of locks that can be paired."""
-        if not self.device.is_logged_in:
-            return [PLACEHOLDER]
-
         # Get list of already paired locks
-        paired_uuids = {l["uuid"].lower() for l in getattr(self.device, "paired_locks", [])}
+        paired_uuids = {
+            l["uuid"].lower() for l in getattr(self.device, "paired_locks", [])
+        }
 
         # Find all locks in Home Assistant not currently paired
         options = [PLACEHOLDER]
         for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
-            if not hasattr(other_wrapper, "model_name") or is_keypad_model(other_wrapper.model_name):
+            if not hasattr(other_wrapper, "model_name") or is_keypad_model(
+                other_wrapper.model_name
+            ):
                 continue
 
-            
             lock_uuid = str(other_wrapper.adv_data.device_uuid).lower()
             if lock_uuid not in paired_uuids:
                 options.append(other_wrapper.entry.title)
@@ -116,9 +121,6 @@ class SesameTouchPairLockSelect(SesameTouchBaseSelect):
         if option == PLACEHOLDER:
             return
 
-        if not self.device.is_logged_in:
-            raise HomeAssistantError("Keypad is not connected/logged in")
-
         # Resolve wrapper for target lock
         target_wrapper = None
         for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
@@ -127,13 +129,18 @@ class SesameTouchPairLockSelect(SesameTouchBaseSelect):
                 break
 
         if not target_wrapper:
-            raise HomeAssistantError(f"Could not find configured lock matching '{option}'")
+            raise HomeAssistantError(
+                f"Could not find configured lock matching '{option}'"
+            )
 
         try:
             lock_uuid = target_wrapper.adv_data.device_uuid
             secret_key_bytes = bytes.fromhex(target_wrapper.secret_key)
-            await self.device.add_paired_lock(lock_uuid, secret_key_bytes)
-            self.wrapper._handle_status_update(self.device, self.device.mech_status)
+            async with on_demand_connection(self.wrapper, timeout=10.0) as dev:
+                await dev.add_paired_lock(lock_uuid, secret_key_bytes)
+                self.wrapper._handle_status_update(
+                    dev, getattr(dev, "mech_status", None)
+                )
         except Exception as err:
             raise HomeAssistantError(f"Failed to pair lock: {err}") from err
 
@@ -149,20 +156,17 @@ class SesameTouchUnpairLockSelect(SesameTouchBaseSelect):
     @property
     def options(self) -> list[str]:
         """Return the list of paired locks that can be unpaired."""
-        if not self.device.is_logged_in:
-            return [PLACEHOLDER]
-
         options = [PLACEHOLDER]
         for lock_info in getattr(self.device, "paired_locks", []):
             lock_uuid_str = lock_info["uuid"].lower()
-            
+
             # Resolve name from HA if possible
             resolved_name = None
             for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
                 if str(other_wrapper.adv_data.device_uuid).lower() == lock_uuid_str:
                     resolved_name = other_wrapper.entry.title
                     break
-            
+
             options.append(resolved_name or lock_info["uuid"])
 
         return options
@@ -172,35 +176,40 @@ class SesameTouchUnpairLockSelect(SesameTouchBaseSelect):
         if option == PLACEHOLDER:
             return
 
-        if not self.device.is_logged_in:
-            raise HomeAssistantError("Keypad is not connected/logged in")
-
         # Resolve UUID from selection option
         target_uuid = None
         for lock_info in getattr(self.device, "paired_locks", []):
             lock_uuid_str = lock_info["uuid"]
-            
+
             # Match by uuid directly
             if lock_uuid_str == option:
                 target_uuid = UUID(lock_uuid_str)
                 break
-                
+
             # Match by resolved name
             resolved_name = None
             for entry_id, other_wrapper in self.wrapper.hass.data[DOMAIN].items():
-                if str(other_wrapper.adv_data.device_uuid).lower() == lock_uuid_str.lower():
+                if (
+                    str(other_wrapper.adv_data.device_uuid).lower()
+                    == lock_uuid_str.lower()
+                ):
                     resolved_name = other_wrapper.entry.title
                     break
-            
+
             if resolved_name == option:
                 target_uuid = UUID(lock_uuid_str)
                 break
 
         if not target_uuid:
-            raise HomeAssistantError(f"Could not resolve lock UUID for option '{option}'")
+            raise HomeAssistantError(
+                f"Could not resolve lock UUID for option '{option}'"
+            )
 
         try:
-            await self.device.remove_paired_lock(target_uuid)
-            self.wrapper._handle_status_update(self.device, self.device.mech_status)
+            async with on_demand_connection(self.wrapper, timeout=10.0) as dev:
+                await dev.remove_paired_lock(target_uuid)
+                self.wrapper._handle_status_update(
+                    dev, getattr(dev, "mech_status", None)
+                )
         except Exception as err:
             raise HomeAssistantError(f"Failed to unpair lock: {err}") from err

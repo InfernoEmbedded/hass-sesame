@@ -36,6 +36,8 @@ class SesameSensorDescription(SensorEntityDescription):
 
 async def _fetch_passcodes_on_start(sensor: Any) -> None:
     """Fetch registered passcodes list via BLE in the background."""
+    if is_keypad_model(sensor.wrapper.model_name):
+        return
     for _ in range(30):
         if sensor.device.is_logged_in:
             break
@@ -51,6 +53,7 @@ async def _fetch_passcodes_on_start(sensor: Any) -> None:
 
 def _get_rssi(wrapper: SesameDeviceWrapper) -> int | None:
     from homeassistant.components import bluetooth
+
     service_info = bluetooth.async_last_service_info(
         wrapper.hass, wrapper.ble_device.address
     )
@@ -67,7 +70,11 @@ SENSOR_DESCRIPTIONS_COMMON: tuple[SesameSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda w: getattr(w.device, "battery_percentage", None),
+        value_fn=lambda w: (
+            getattr(w, "battery_percentage", None)
+            if getattr(w, "battery_percentage", None) is not None
+            else getattr(w.device, "battery_percentage", None)
+        ),
     ),
 )
 
@@ -77,7 +84,15 @@ SENSOR_DESC_CARD = SesameSensorDescription(
     icon="mdi:credit-card-outline",
     state_class=SensorStateClass.MEASUREMENT,
     entity_category=EntityCategory.DIAGNOSTIC,
-    value_fn=lambda w: getattr(w.device, "cards_count", None),
+    value_fn=lambda w: (
+        getattr(w.device, "cards_count", None)
+        if getattr(w.device, "cards_count", None) is not None
+        else (
+            len(w.logical_cards)
+            if getattr(w, "logical_cards", None) is not None
+            else None
+        )
+    ),
 )
 
 SENSOR_DESC_FINGERPRINT = SesameSensorDescription(
@@ -86,7 +101,15 @@ SENSOR_DESC_FINGERPRINT = SesameSensorDescription(
     icon="mdi:fingerprint",
     state_class=SensorStateClass.MEASUREMENT,
     entity_category=EntityCategory.DIAGNOSTIC,
-    value_fn=lambda w: getattr(w.device, "fingerprints_count", None),
+    value_fn=lambda w: (
+        getattr(w.device, "fingerprints_count", None)
+        if getattr(w.device, "fingerprints_count", None) is not None
+        else (
+            len(w.logical_fingerprints)
+            if getattr(w, "logical_fingerprints", None) is not None
+            else None
+        )
+    ),
 )
 
 SENSOR_DESC_PASSCODE = SesameSensorDescription(
@@ -95,8 +118,20 @@ SENSOR_DESC_PASSCODE = SesameSensorDescription(
     icon="mdi:keyboard-outline",
     state_class=SensorStateClass.MEASUREMENT,
     entity_category=EntityCategory.DIAGNOSTIC,
-    value_fn=lambda w: getattr(w.device, "passcodes_count", None),
-    attrs_fn=lambda w: {"passcodes": getattr(w.device, "passcodes", {})},
+    value_fn=lambda w: (
+        getattr(w.device, "passcodes_count", None)
+        if getattr(w.device, "passcodes_count", None) is not None
+        else (
+            len(w.logical_passcodes)
+            if getattr(w, "logical_passcodes", None) is not None
+            else None
+        )
+    ),
+    attrs_fn=lambda w: (
+        {"passcodes": getattr(w, "logical_passcodes", {})}
+        if is_keypad_model(w.model_name)
+        else {"passcodes": getattr(w.device, "passcodes", {})}
+    ),
     init_task_fn=_fetch_passcodes_on_start,
 )
 
@@ -106,7 +141,11 @@ SENSOR_DESC_FACE = SesameSensorDescription(
     icon="mdi:face-recognition",
     state_class=SensorStateClass.MEASUREMENT,
     entity_category=EntityCategory.DIAGNOSTIC,
-    value_fn=lambda w: len(w.logical_faces) if hasattr(w, "logical_faces") else getattr(w.device, "faces_count", None),
+    value_fn=lambda w: (
+        getattr(w.device, "faces_count", None)
+        if getattr(w.device, "faces_count", None) is not None
+        else (len(w.logical_faces) if hasattr(w, "logical_faces") else None)
+    ),
 )
 
 SENSOR_DESC_PALM = SesameSensorDescription(
@@ -115,7 +154,11 @@ SENSOR_DESC_PALM = SesameSensorDescription(
     icon="mdi:hand-wave",
     state_class=SensorStateClass.MEASUREMENT,
     entity_category=EntityCategory.DIAGNOSTIC,
-    value_fn=lambda w: len(w.logical_palms) if hasattr(w, "logical_palms") else getattr(w.device, "palms_count", None),
+    value_fn=lambda w: (
+        getattr(w.device, "palms_count", None)
+        if getattr(w.device, "palms_count", None) is not None
+        else (len(w.logical_palms) if hasattr(w, "logical_palms") else None)
+    ),
 )
 
 SENSOR_DESC_PAIRED_LOCKS = SesameSensorDescription(
@@ -124,7 +167,11 @@ SENSOR_DESC_PAIRED_LOCKS = SesameSensorDescription(
     icon="mdi:lock-link",
     state_class=SensorStateClass.MEASUREMENT,
     entity_category=EntityCategory.DIAGNOSTIC,
-    value_fn=lambda w: len(w.device.paired_locks) if hasattr(w.device, "paired_locks") and w.device.paired_locks else (0 if hasattr(w.device, "paired_locks") else None),
+    value_fn=lambda w: (
+        len(w.device.paired_locks)
+        if hasattr(w.device, "paired_locks") and w.device.paired_locks
+        else (0 if hasattr(w.device, "paired_locks") else None)
+    ),
     attrs_fn=lambda w: {"paired_locks": getattr(w.device, "paired_locks", [])},
 )
 
@@ -230,7 +277,9 @@ class SesameSensor(SensorEntity):
 
     entity_description: SesameSensorDescription
 
-    def __init__(self, wrapper: SesameDeviceWrapper, description: SesameSensorDescription) -> None:
+    def __init__(
+        self, wrapper: SesameDeviceWrapper, description: SesameSensorDescription
+    ) -> None:
         """Initialize the sensor."""
         self.wrapper = wrapper
         self.device = wrapper.device
@@ -251,7 +300,9 @@ class SesameSensor(SensorEntity):
             self.async_write_ha_state
         )
         if self.entity_description.init_task_fn:
-            self._init_task = asyncio.create_task(self.entity_description.init_task_fn(self))
+            self._init_task = asyncio.create_task(
+                self.entity_description.init_task_fn(self)
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Unregister callbacks when removed."""
@@ -265,6 +316,8 @@ class SesameSensor(SensorEntity):
         """Return true if the device is connected and logged in, or if sensor is always available."""
         if self.entity_description.always_available:
             return True
+        if is_keypad_model(self.wrapper.model_name):
+            return self.wrapper.is_available
         return self.device.is_logged_in
 
     @property

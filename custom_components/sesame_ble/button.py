@@ -32,7 +32,11 @@ async def _async_press_set_locked(wrapper: SesameDeviceWrapper) -> None:
     current_angle = wrapper.device.current_angle
     if current_angle is None:
         raise HomeAssistantError("Current position/angle is unknown")
-    unlock_position = wrapper.device.unlock_position if wrapper.device.unlock_position is not None else 0
+    unlock_position = (
+        wrapper.device.unlock_position
+        if wrapper.device.unlock_position is not None
+        else 0
+    )
     try:
         await wrapper.device.configure_lock_position(current_angle, unlock_position)
     except Exception as err:
@@ -45,11 +49,15 @@ async def _async_press_set_unlocked(wrapper: SesameDeviceWrapper) -> None:
     current_angle = wrapper.device.current_angle
     if current_angle is None:
         raise HomeAssistantError("Current position/angle is unknown")
-    lock_position = wrapper.device.lock_position if wrapper.device.lock_position is not None else 0
+    lock_position = (
+        wrapper.device.lock_position if wrapper.device.lock_position is not None else 0
+    )
     try:
         await wrapper.device.configure_lock_position(lock_position, current_angle)
     except Exception as err:
-        raise HomeAssistantError(f"Failed to configure unlocked position: {err}") from err
+        raise HomeAssistantError(
+            f"Failed to configure unlocked position: {err}"
+        ) from err
 
 
 async def _async_press_calibrate_magnet(wrapper: SesameDeviceWrapper) -> None:
@@ -96,12 +104,14 @@ async def async_setup_entry(
 
     # Keypads and Touch devices do not have lock positions to calibrate
     if is_keypad_model(wrapper.model_name):
-        logger.debug("Skipping button setup for Sesame Touch device %s", entry.unique_id)
+        logger.debug(
+            "Skipping button setup for Sesame Touch device %s", entry.unique_id
+        )
         return
 
-    async_add_entities([
-        SesameButton(wrapper, description) for description in BUTTON_DESCRIPTIONS
-    ])
+    async_add_entities(
+        [SesameButton(wrapper, description) for description in BUTTON_DESCRIPTIONS]
+    )
 
 
 class SesameButton(ButtonEntity):
@@ -109,7 +119,9 @@ class SesameButton(ButtonEntity):
 
     entity_description: SesameButtonDescription
 
-    def __init__(self, wrapper: SesameDeviceWrapper, description: SesameButtonDescription) -> None:
+    def __init__(
+        self, wrapper: SesameDeviceWrapper, description: SesameButtonDescription
+    ) -> None:
         """Initialize the button."""
         self.wrapper = wrapper
         self.entity_description = description
@@ -119,6 +131,8 @@ class SesameButton(ButtonEntity):
     @property
     def available(self) -> bool:
         """Return true if the device is connected and logged in."""
+        if is_keypad_model(self.wrapper.model_name):
+            return self.wrapper.is_available
         return self.wrapper.device.is_logged_in
 
     @property

@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import SesameDeviceWrapper
+from . import SesameDeviceWrapper, is_keypad_model
 from .const import DOMAIN
 from .firmware import download_firmware_zip, get_product_type_id
 from .nordic_dfu import DFU_SERVICE_UUID, get_bootloader_mac, perform_nordic_dfu
@@ -38,7 +38,9 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
     """Representation of a Sesame Firmware Update entity for Home Assistant Update Notifications."""
 
     _attr_device_class = UpdateDeviceClass.FIRMWARE
-    _attr_supported_features = UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+    _attr_supported_features = (
+        UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+    )
 
     def __init__(self, wrapper: SesameDeviceWrapper) -> None:
         """Initialize the update entity."""
@@ -71,6 +73,8 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
         """Return true if the device is connected and logged in, or if an update is in progress."""
         if self._in_progress:
             return True
+        if is_keypad_model(self.wrapper.model_name):
+            return self.wrapper.is_available
         return self.device.is_logged_in
 
     @property
@@ -129,9 +133,12 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
         """Return the update progress percentage (0-100) or None."""
         return self._attr_update_percentage
 
-    async def _async_find_dfu_target(self, original_mac: str, timeout: float = 30.0) -> Any:
+    async def _async_find_dfu_target(
+        self, original_mac: str, timeout: float = 30.0
+    ) -> Any:
         """Finds the Nordic DFU bootloader target device."""
         from bleak.backends.device import BLEDevice
+
         inc_mac = get_bootloader_mac(original_mac).upper()
         orig_mac = original_mac.upper()
 
@@ -142,40 +149,72 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
         if hass:
             while loop.time() < deadline:
                 # 1. Check active BLE advertisements for DFU service or DFU name
-                for service_info in bluetooth.async_discovered_service_info(hass, connectable=True):
+                for service_info in bluetooth.async_discovered_service_info(
+                    hass, connectable=True
+                ):
                     s_addr = service_info.address.upper()
-                    uuids = [str(u).lower() for u in getattr(service_info, "service_uuids", [])]
-                    is_dfu_uuid = any(u in uuids for u in (DFU_SERVICE_UUID.lower(), "fe59", "0000fe59-0000-1000-8000-00805f9b34fb"))
-                    is_dfu_name = bool(service_info.name and "dfu" in service_info.name.lower())
+                    uuids = [
+                        str(u).lower()
+                        for u in getattr(service_info, "service_uuids", [])
+                    ]
+                    is_dfu_uuid = any(
+                        u in uuids
+                        for u in (
+                            DFU_SERVICE_UUID.lower(),
+                            "fe59",
+                            "0000fe59-0000-1000-8000-00805f9b34fb",
+                        )
+                    )
+                    is_dfu_name = bool(
+                        service_info.name and "dfu" in service_info.name.lower()
+                    )
 
                     if (is_dfu_uuid or is_dfu_name) and s_addr in (orig_mac, inc_mac):
-                        logger.info("Found DFU bootloader target via advertisement (%s, %s) matching %s", service_info.name, uuids, s_addr)
+                        logger.info(
+                            "Found DFU bootloader target via advertisement (%s, %s) matching %s",
+                            service_info.name,
+                            uuids,
+                            s_addr,
+                        )
                         return service_info.device
 
                     if is_dfu_uuid or is_dfu_name:
-                        logger.info("Found DFU bootloader target via advertisement (%s, %s) at %s", service_info.name, uuids, s_addr)
+                        logger.info(
+                            "Found DFU bootloader target via advertisement (%s, %s) at %s",
+                            service_info.name,
+                            uuids,
+                            s_addr,
+                        )
                         return service_info.device
 
                 # 2. Check for connectable device in Bluetooth cache (Sesame bootloader keeps orig_mac; standard Nordic unbonded uses inc_mac)
                 for addr in (orig_mac, inc_mac):
-                    dev = (
-                        bluetooth.async_ble_device_from_address(hass, addr, connectable=True)
-                        or bluetooth.async_ble_device_from_address(hass, addr.lower(), connectable=True)
+                    dev = bluetooth.async_ble_device_from_address(
+                        hass, addr, connectable=True
+                    ) or bluetooth.async_ble_device_from_address(
+                        hass, addr.lower(), connectable=True
                     )
                     if dev:
-                        logger.info("Found DFU bootloader target by connectable address: %s", addr)
+                        logger.info(
+                            "Found DFU bootloader target by connectable address: %s",
+                            addr,
+                        )
                         return dev
 
                 await asyncio.sleep(0.5)
 
             # Check if any scanner saw orig_mac or inc_mac even if connectable flag hasn't settled
             for addr in (orig_mac, inc_mac):
-                dev = (
-                    bluetooth.async_ble_device_from_address(hass, addr, connectable=False)
-                    or bluetooth.async_ble_device_from_address(hass, addr.lower(), connectable=False)
+                dev = bluetooth.async_ble_device_from_address(
+                    hass, addr, connectable=False
+                ) or bluetooth.async_ble_device_from_address(
+                    hass, addr.lower(), connectable=False
                 )
                 if dev:
-                    logger.info("Found DFU bootloader target via scanner (non-connectable cache): %s", addr)
+                    logger.info(
+                        "Found DFU bootloader target via scanner (non-connectable cache): %s",
+                        addr,
+                    )
                     return dev
 
         logger.warning(
@@ -185,33 +224,46 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
         )
         return BLEDevice(orig_mac, name="DfuTarg", details={})
 
-    async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
+    async def async_install(
+        self, version: str | None, backup: bool, **kwargs: Any
+    ) -> None:
         """Install firmware update by initiating BLE DFU mode on the device and transferring image."""
         self._in_progress = True
         self._attr_update_percentage = 0
         self.async_write_ha_state()
 
-        product_type = (
-            get_product_type_id(getattr(self.device, "product_model", None))
-            or get_product_type_id(getattr(self.wrapper, "model_name", None))
-        )
+        product_type = get_product_type_id(
+            getattr(self.device, "product_model", None)
+        ) or get_product_type_id(getattr(self.wrapper, "model_name", None))
         if product_type is None:
             self._in_progress = False
             self._attr_update_percentage = None
             self.async_write_ha_state()
-            raise ValueError(f"Unknown or unsupported Sesame product model: {self.wrapper.model_name}")
+            raise ValueError(
+                f"Unknown or unsupported Sesame product model: {self.wrapper.model_name}"
+            )
 
         hass = getattr(self, "hass", None) or getattr(self.wrapper, "hass", None)
         self.wrapper.is_updating = True
         try:
-            logger.info("Starting firmware update process for %s (productType=%d)", self.device.address, product_type)
+            logger.info(
+                "Starting firmware update process for %s (productType=%d)",
+                self.device.address,
+                product_type,
+            )
             self._attr_update_percentage = 2
             self.async_write_ha_state()
 
             # 1. Download official DFU zip package from Candy House cloud or local storage
-            logger.info("Locating firmware zip package for %s...", self.wrapper.model_name)
+            logger.info(
+                "Locating firmware zip package for %s...", self.wrapper.model_name
+            )
             api_key, pool_id = self.wrapper._get_firmware_credentials()
-            config_dir = getattr(hass.config, "config_dir", None) if (hass and hasattr(hass, "config")) else None
+            config_dir = (
+                getattr(hass.config, "config_dir", None)
+                if (hass and hasattr(hass, "config"))
+                else None
+            )
             if hass:
                 target_version, zip_bytes = await hass.async_add_executor_job(
                     download_firmware_zip,
@@ -231,7 +283,11 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
                     config_dir=config_dir,
                     model_name=self.wrapper.model_name,
                 )
-            logger.info("Firmware package ready: version %s (%d bytes)", target_version, len(zip_bytes))
+            logger.info(
+                "Firmware package ready: version %s (%d bytes)",
+                target_version,
+                len(zip_bytes),
+            )
             self._attr_update_percentage = 5
             self.async_write_ha_state()
 
@@ -240,7 +296,11 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
             if hass and DOMAIN in hass.data:
                 for entry_id, wrapper in hass.data[DOMAIN].items():
                     dev = getattr(wrapper, "device", None)
-                    if dev and dev != self.device and hasattr(dev, "pause_auto_reconnect"):
+                    if (
+                        dev
+                        and dev != self.device
+                        and hasattr(dev, "pause_auto_reconnect")
+                    ):
                         dev.pause_auto_reconnect()
                         if getattr(dev, "is_connected", False):
                             try:
@@ -254,11 +314,17 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
 
             # 3. Enter DFU bootloader mode
             if not self.device.is_connected:
-                logger.info("Connecting to %s to send ENABLE_DFU command...", self.device.address)
+                logger.info(
+                    "Connecting to %s to send ENABLE_DFU command...",
+                    self.device.address,
+                )
                 try:
                     await self.device.connect()
                 except Exception as err:
-                    logger.info("Could not connect to Sesame GATT (device may already be in DFU bootloader mode): %s", err)
+                    logger.info(
+                        "Could not connect to Sesame GATT (device may already be in DFU bootloader mode): %s",
+                        err,
+                    )
 
             if self.device.is_connected:
                 logger.info("Sending ENABLE_DFU command to %s", self.device.address)
@@ -266,7 +332,10 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
                     await self.device.enable_dfu()
                     await asyncio.sleep(0.5)
                 except Exception as err:
-                    logger.warning("Error sending enable_dfu (device may already be entering bootloader): %s", err)
+                    logger.warning(
+                        "Error sending enable_dfu (device may already be entering bootloader): %s",
+                        err,
+                    )
 
                 try:
                     await self.device.disconnect()
@@ -281,13 +350,19 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
             logger.info("Waiting 3.0s for device to enter DFU bootloader mode...")
             await asyncio.sleep(3.0)
 
-            logger.info("Searching for Nordic DFU bootloader target for %s...", self.device.address)
-            target_device = await self._async_find_dfu_target(self.device.address, timeout=30.0)
+            logger.info(
+                "Searching for Nordic DFU bootloader target for %s...",
+                self.device.address,
+            )
+            target_device = await self._async_find_dfu_target(
+                self.device.address, timeout=30.0
+            )
             logger.info("Connecting to DFU bootloader at %s...", target_device.address)
 
             # Clear BLE services cache before connecting so the new DFU GATT table is discovered
             try:
                 import bleak_retry_connector
+
                 if hasattr(bleak_retry_connector, "clear_cache"):
                     res = bleak_retry_connector.clear_cache(target_device.address)
                     if asyncio.iscoroutine(res):
@@ -298,6 +373,7 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
             client = None
             try:
                 from bleak_retry_connector import establish_connection
+
                 client = await establish_connection(
                     BleakClient,
                     target_device,
@@ -319,7 +395,9 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
 
             logger.info("Executing Nordic Secure DFU update...")
             try:
-                await perform_nordic_dfu(client, zip_bytes, progress_callback=progress_callback)
+                await perform_nordic_dfu(
+                    client, zip_bytes, progress_callback=progress_callback
+                )
             finally:
                 try:
                     await client.disconnect()
@@ -328,7 +406,9 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
 
             self._attr_update_percentage = 100
             self.async_write_ha_state()
-            logger.info("Firmware update successfully completed on %s!", self.device.address)
+            logger.info(
+                "Firmware update successfully completed on %s!", self.device.address
+            )
 
             if target_version and hasattr(self.device, "_firmware_version"):
                 self.device._firmware_version = target_version
@@ -339,6 +419,7 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
             # Clear BLE services cache for application mode so it rediscovers services
             try:
                 import bleak_retry_connector
+
                 if hasattr(bleak_retry_connector, "clear_cache"):
                     res = bleak_retry_connector.clear_cache(self.device.address)
                     if asyncio.iscoroutine(res):
@@ -347,23 +428,34 @@ class SesameFirmwareUpdateEntity(UpdateEntity):
                 pass
 
             # Resume auto-reconnection and trigger reconnect
+            # Resume auto-reconnection and trigger reconnect for non-keypad devices
             if hasattr(self.device, "resume_auto_reconnect"):
                 self.device.resume_auto_reconnect()
-            if hasattr(self.device, "_auto_reconnect"):
+            if (
+                not is_keypad_model(self.wrapper.model_name)
+                and getattr(self.device, "_reconnect_limit", 1) > 0
+                and hasattr(self.device, "_auto_reconnect")
+            ):
                 asyncio.create_task(self.device._auto_reconnect())
 
         except Exception as err:
             logger.error("Firmware update failed on %s: %s", self.device.address, err)
             if hasattr(self.device, "resume_auto_reconnect"):
                 self.device.resume_auto_reconnect()
-            if hasattr(self.device, "_auto_reconnect"):
+            if (
+                not is_keypad_model(self.wrapper.model_name)
+                and getattr(self.device, "_reconnect_limit", 1) > 0
+                and hasattr(self.device, "_auto_reconnect")
+            ):
                 asyncio.create_task(self.device._auto_reconnect())
             raise
         finally:
             for dev in other_devices:
                 if hasattr(dev, "resume_auto_reconnect"):
                     dev.resume_auto_reconnect()
-                if hasattr(dev, "_auto_reconnect"):
+                if getattr(dev, "_reconnect_limit", 1) > 0 and hasattr(
+                    dev, "_auto_reconnect"
+                ):
                     asyncio.create_task(dev._auto_reconnect())
             self.wrapper.is_updating = False
             self._in_progress = False

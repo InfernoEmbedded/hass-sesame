@@ -9,10 +9,15 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from . import SesameDeviceWrapper, parse_datetime, is_keypad_model, get_supported_auth_methods
+from . import (
+    SesameDeviceWrapper,
+    get_supported_auth_methods,
+    is_keypad_model,
+    on_demand_connection,
+    parse_datetime,
+)
 
 from pysesame_ble import BaseKeypad
-
 
 
 logger = logging.getLogger(__name__)
@@ -40,131 +45,169 @@ class SesamePasscodesView(HomeAssistantView):
                 device_uuid = ""
                 if hasattr(other_wrapper, "adv_data") and other_wrapper.adv_data:
                     device_uuid = str(other_wrapper.adv_data.device_uuid)
-                qr_info = other_wrapper.get_qr_code_data() if hasattr(other_wrapper, "get_qr_code_data") else None
-                all_locks.append({
-                    "entry_id": entry_id,
-                    "name": other_wrapper.entry.title,
-                    "uuid": device_uuid,
-                    "qr_url": qr_info["qr_url"] if qr_info else None,
-                    "qr_image_url": qr_info["qr_image_url"] if qr_info else None,
-                    "secret_key": qr_info["secret_key"] if qr_info else None,
-                })
-
+                qr_info = (
+                    other_wrapper.get_qr_code_data()
+                    if hasattr(other_wrapper, "get_qr_code_data")
+                    else None
+                )
+                all_locks.append(
+                    {
+                        "entry_id": entry_id,
+                        "name": other_wrapper.entry.title,
+                        "uuid": device_uuid,
+                        "qr_url": qr_info["qr_url"] if qr_info else None,
+                        "qr_image_url": qr_info["qr_image_url"] if qr_info else None,
+                        "secret_key": qr_info["secret_key"] if qr_info else None,
+                    }
+                )
 
         keypads_list = []
         for entry_id, wrapper in self.hass.data[DOMAIN].items():
             if not is_keypad_model(getattr(wrapper, "model_name", None)):
                 continue
 
-
-            # Trigger background sync of physical keypad in a safe asyncio task,
-            # so the HTTP GET request returns instantly and doesn't block the UI.
-            if wrapper.device and wrapper.device.is_logged_in:
-                import time
-                now = time.time()
-                if now - getattr(wrapper, "_last_sync_time", 0) > 15.0 and not wrapper._sync_lock.locked():
-                    wrapper._last_sync_time = now
-                    asyncio.create_task(wrapper._sync_and_apply_schedules())
-
             passcodes_data = []
             for uid, info in wrapper.logical_passcodes.items():
-                passcodes_data.append({
-                    "uid": uid,
-                    "name": info["name"],
-                    "code": info["code"],
-                    "start": info.get("start", ""),
-                    "end": info.get("end", ""),
-                    "days": info.get("days", []),
-                    "time_start": info.get("time_start", ""),
-                    "time_end": info.get("time_end", ""),
-                    "one_time": info.get("one_time", False),
-                    "person_id": info.get("person_id", None),
-                    "is_physical": uid in wrapper.device.passcodes,
-                })
+                passcodes_data.append(
+                    {
+                        "uid": uid,
+                        "name": info["name"],
+                        "code": info["code"],
+                        "start": info.get("start", ""),
+                        "end": info.get("end", ""),
+                        "days": info.get("days", []),
+                        "time_start": info.get("time_start", ""),
+                        "time_end": info.get("time_end", ""),
+                        "one_time": info.get("one_time", False),
+                        "person_id": info.get("person_id", None),
+                        "is_physical": uid in wrapper.device.passcodes,
+                    }
+                )
 
             cards_data = []
             for uid, info in wrapper.logical_cards.items():
-                cards_data.append({
-                    "uid": uid,
-                    "name": info["name"],
-                    "type": info["type"],
-                    "person_id": info.get("person_id", None),
-                })
+                cards_data.append(
+                    {
+                        "uid": uid,
+                        "name": info["name"],
+                        "type": info["type"],
+                        "person_id": info.get("person_id", None),
+                    }
+                )
 
             fingerprints_data = []
             for uid, info in wrapper.logical_fingerprints.items():
-                fingerprints_data.append({
-                    "uid": uid,
-                    "name": info["name"],
-                    "type": info["type"],
-                    "person_id": info.get("person_id", None),
-                })
+                fingerprints_data.append(
+                    {
+                        "uid": uid,
+                        "name": info["name"],
+                        "type": info["type"],
+                        "person_id": info.get("person_id", None),
+                    }
+                )
 
             faces_data = []
             for uid, info in getattr(wrapper, "logical_faces", {}).items():
-                faces_data.append({
-                    "uid": uid,
-                    "name": info["name"],
-                    "type": info.get("type", 0x80),
-                    "person_id": info.get("person_id", None),
-                })
+                faces_data.append(
+                    {
+                        "uid": uid,
+                        "name": info["name"],
+                        "type": info.get("type", 0x80),
+                        "person_id": info.get("person_id", None),
+                    }
+                )
 
             palms_data = []
             for uid, info in getattr(wrapper, "logical_palms", {}).items():
-                palms_data.append({
-                    "uid": uid,
-                    "name": info["name"],
-                    "type": info.get("type", 0x80),
-                    "person_id": info.get("person_id", None),
-                })
+                palms_data.append(
+                    {
+                        "uid": uid,
+                        "name": info["name"],
+                        "type": info.get("type", 0x80),
+                        "person_id": info.get("person_id", None),
+                    }
+                )
 
             paired_locks_data = []
             if hasattr(wrapper.device, "paired_locks"):
                 for lock_info in wrapper.device.paired_locks:
                     lock_uuid_str = lock_info["uuid"]
                     status_code = lock_info["status"]
-                    
+
                     configured_name = "Unknown Lock"
                     configured_entry_id = None
                     for other_entry_id, other_wrapper in self.hass.data[DOMAIN].items():
-                        if hasattr(other_wrapper, "adv_data") and other_wrapper.adv_data and str(other_wrapper.adv_data.device_uuid) == lock_uuid_str:
+                        if (
+                            hasattr(other_wrapper, "adv_data")
+                            and other_wrapper.adv_data
+                            and str(other_wrapper.adv_data.device_uuid) == lock_uuid_str
+                        ):
                             configured_name = other_wrapper.entry.title
                             configured_entry_id = other_entry_id
                             break
-                            
-                    paired_locks_data.append({
-                        "uuid": lock_uuid_str,
-                        "status": status_code,
-                        "name": configured_name,
-                        "entry_id": configured_entry_id,
-                    })
 
-            qr_info = wrapper.get_qr_code_data() if hasattr(wrapper, "get_qr_code_data") else None
-            keypads_list.append({
-                "entry_id": entry_id,
-                "name": f"Sesame {wrapper.model_name} ({wrapper.ble_device.name or wrapper.ble_device.address})",
-                "model_name": wrapper.model_name,
-                "supported_auth_methods": get_supported_auth_methods(wrapper.model_name),
-                "mac_address": wrapper.ble_device.address,
-                "is_connected": wrapper.device.is_connected,
-                "is_logged_in": wrapper.device.is_logged_in,
+                    paired_locks_data.append(
+                        {
+                            "uuid": lock_uuid_str,
+                            "status": status_code,
+                            "name": configured_name,
+                            "entry_id": configured_entry_id,
+                        }
+                    )
 
-                "qr_url": qr_info["qr_url"] if qr_info else None,
-                "qr_image_url": qr_info["qr_image_url"] if qr_info else None,
-                "secret_key": qr_info["secret_key"] if qr_info else None,
-                "device_uuid": qr_info["device_uuid"] if qr_info else None,
-                "passcodes": passcodes_data,
-                "cards": cards_data,
-                "fingerprints": fingerprints_data,
-                "faces": faces_data,
-                "palms": palms_data,
-                "paired_locks": paired_locks_data,
-                "scanned_card": wrapper.device.scanned_card if isinstance(getattr(wrapper.device, "scanned_card", None), dict) else None,
-                "scanned_fingerprint": wrapper.device.scanned_fingerprint if isinstance(getattr(wrapper.device, "scanned_fingerprint", None), dict) else None,
-                "scanned_passcode": wrapper.device.scanned_passcode if isinstance(getattr(wrapper.device, "scanned_passcode", None), dict) else None,
-            })
-
-
+            qr_info = (
+                wrapper.get_qr_code_data()
+                if hasattr(wrapper, "get_qr_code_data")
+                else None
+            )
+            keypads_list.append(
+                {
+                    "entry_id": entry_id,
+                    "name": f"Sesame {wrapper.model_name} ({wrapper.ble_device.name or wrapper.ble_device.address})",
+                    "model_name": wrapper.model_name,
+                    "supported_auth_methods": get_supported_auth_methods(
+                        wrapper.model_name
+                    ),
+                    "mac_address": wrapper.ble_device.address,
+                    "is_connected": bool(getattr(wrapper.device, "is_connected", False))
+                    if isinstance(getattr(wrapper.device, "is_connected", False), bool)
+                    else False,
+                    "is_logged_in": bool(getattr(wrapper.device, "is_logged_in", False))
+                    if isinstance(getattr(wrapper.device, "is_logged_in", False), bool)
+                    else False,
+                    "is_available": bool(getattr(wrapper, "is_available", False))
+                    if isinstance(getattr(wrapper, "is_available", False), bool)
+                    else False,
+                    "battery_percentage": getattr(wrapper, "battery_percentage", None)
+                    if isinstance(
+                        getattr(wrapper, "battery_percentage", None), (int, float)
+                    )
+                    else None,
+                    "qr_url": qr_info["qr_url"] if qr_info else None,
+                    "qr_image_url": qr_info["qr_image_url"] if qr_info else None,
+                    "secret_key": qr_info["secret_key"] if qr_info else None,
+                    "device_uuid": qr_info["device_uuid"] if qr_info else None,
+                    "passcodes": passcodes_data,
+                    "cards": cards_data,
+                    "fingerprints": fingerprints_data,
+                    "faces": faces_data,
+                    "palms": palms_data,
+                    "paired_locks": paired_locks_data,
+                    "scanned_card": wrapper.device.scanned_card
+                    if isinstance(getattr(wrapper.device, "scanned_card", None), dict)
+                    else None,
+                    "scanned_fingerprint": wrapper.device.scanned_fingerprint
+                    if isinstance(
+                        getattr(wrapper.device, "scanned_fingerprint", None), dict
+                    )
+                    else None,
+                    "scanned_passcode": wrapper.device.scanned_passcode
+                    if isinstance(
+                        getattr(wrapper.device, "scanned_passcode", None), dict
+                    )
+                    else None,
+                }
+            )
 
         return self.json({"keypads": keypads_list, "all_locks": all_locks})
 
@@ -195,17 +238,29 @@ class SesamePasscodesView(HomeAssistantView):
         if not name:
             return self.json({"error": "Name is required"}, status_code=400)
         if not code or not code.isdigit() or len(code) < 4 or len(code) > 16:
-            return self.json({"error": "PIN must be between 4 and 16 digits"}, status_code=400)
+            return self.json(
+                {"error": "PIN must be between 4 and 16 digits"}, status_code=400
+            )
 
         # Validate datetimes
         if start:
             start_dt = parse_datetime(start)
             if not start_dt:
-                return self.json({"error": f"Invalid start datetime format: '{start}'. Use YYYY-MM-DD HH:MM"}, status_code=400)
+                return self.json(
+                    {
+                        "error": f"Invalid start datetime format: '{start}'. Use YYYY-MM-DD HH:MM"
+                    },
+                    status_code=400,
+                )
         if end:
             end_dt = parse_datetime(end)
             if not end_dt:
-                return self.json({"error": f"Invalid end datetime format: '{end}'. Use YYYY-MM-DD HH:MM"}, status_code=400)
+                return self.json(
+                    {
+                        "error": f"Invalid end datetime format: '{end}'. Use YYYY-MM-DD HH:MM"
+                    },
+                    status_code=400,
+                )
 
         # Validate time_start and time_end
         if time_start:
@@ -214,14 +269,24 @@ class SesamePasscodesView(HomeAssistantView):
                 if not (0 <= h <= 23 and 0 <= m <= 59):
                     raise ValueError()
             except ValueError:
-                return self.json({"error": f"Invalid daily start time format: '{time_start}'. Use HH:MM"}, status_code=400)
+                return self.json(
+                    {
+                        "error": f"Invalid daily start time format: '{time_start}'. Use HH:MM"
+                    },
+                    status_code=400,
+                )
         if time_end:
             try:
                 h, m = map(int, time_end.split(":"))
                 if not (0 <= h <= 23 and 0 <= m <= 59):
                     raise ValueError()
             except ValueError:
-                return self.json({"error": f"Invalid daily end time format: '{time_end}'. Use HH:MM"}, status_code=400)
+                return self.json(
+                    {
+                        "error": f"Invalid daily end time format: '{time_end}'. Use HH:MM"
+                    },
+                    status_code=400,
+                )
 
         # Resolve unique hex ID from PIN
         uid = bytes(int(c) for c in code).hex()
@@ -229,19 +294,20 @@ class SesamePasscodesView(HomeAssistantView):
 
         # Check for duplicate passcode name
         for other_uid, other_info in wrapper.logical_passcodes.items():
-            if other_uid != old_uid and other_info["name"].strip().lower() == name.lower():
-                return self.json({"error": f"A passcode named '{name}' already exists"}, status_code=400)
+            if (
+                other_uid != old_uid
+                and other_info["name"].strip().lower() == name.lower()
+            ):
+                return self.json(
+                    {"error": f"A passcode named '{name}' already exists"},
+                    status_code=400,
+                )
 
         try:
-            # If we are updating and PIN changed, delete old code
+            # If we are updating and PIN changed, delete old code logically
             if old_uid and old_uid != uid:
                 if old_uid in wrapper.logical_passcodes:
                     del wrapper.logical_passcodes[old_uid]
-                if wrapper.device and wrapper.device.is_logged_in:
-                    try:
-                        await wrapper.device.delete_passcode(old_uid)
-                    except Exception as e:
-                        logger.warning("Failed to delete old passcode %s from physical device: %s", old_uid, e)
 
             # Update/Add to logical
             wrapper.logical_passcodes[uid] = {
@@ -256,34 +322,58 @@ class SesamePasscodesView(HomeAssistantView):
                 "person_id": person_id,
             }
 
-            # If the passcode is already active physically (e.g. scanned), update its name on the device
-            if wrapper.device and wrapper.device.is_logged_in and uid in wrapper.device.passcodes:
-                try:
-                    await wrapper.device.update_passcode_name(uid, name)
-                except Exception as e:
-                    logger.warning("Failed to rename passcode on physical device: %s", e)
-
-            # If it matches a scanned passcode, clear the scanned_passcode and stop registration mode
-            if getattr(wrapper.device, "scanned_passcode", None) and wrapper.device.scanned_passcode.get("uid") == uid:
-                try:
-                    await wrapper.device.set_passcode_registration_mode(False)
-                except Exception:
-                    pass
-                wrapper.device.scanned_passcode = None
-
             # Save to store
-            await wrapper.store.async_save({
-                "passcodes": wrapper.logical_passcodes,
-                "cards": wrapper.logical_cards,
-                "fingerprints": wrapper.logical_fingerprints
-            })
+            await wrapper.store.async_save(
+                {
+                    "passcodes": wrapper.logical_passcodes,
+                    "cards": wrapper.logical_cards,
+                    "fingerprints": wrapper.logical_fingerprints,
+                }
+            )
 
-            # Force immediate sync
-            asyncio.create_task(wrapper._sync_and_apply_schedules())
+            # Connect on-demand to update physical device
+            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                if old_uid and old_uid != uid:
+                    if dev and getattr(dev, "is_logged_in", False):
+                        try:
+                            await dev.delete_passcode(old_uid)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to delete old passcode %s from physical device: %s",
+                                old_uid,
+                                e,
+                            )
+
+                if (
+                    dev
+                    and getattr(dev, "is_logged_in", False)
+                    and uid in getattr(dev, "passcodes", {})
+                ):
+                    try:
+                        await dev.update_passcode_name(uid, name)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to rename passcode on physical device: %s", e
+                        )
+
+                if (
+                    getattr(dev, "scanned_passcode", None)
+                    and dev.scanned_passcode.get("uid") == uid
+                ):
+                    try:
+                        await dev.set_passcode_registration_mode(False)
+                    except Exception:
+                        pass
+                    dev.scanned_passcode = None
+
+                if hasattr(wrapper, "_sync_and_apply_schedules"):
+                    await wrapper._sync_and_apply_schedules()
 
             return self.json({"success": True, "uid": uid})
         except Exception as e:
-            return self.json({"error": f"Failed to save passcode: {e}"}, status_code=500)
+            return self.json(
+                {"error": f"Failed to save passcode: {e}"}, status_code=500
+            )
 
     async def delete(self, request: web.Request) -> web.Response:
         """Delete a passcode."""
@@ -304,28 +394,37 @@ class SesamePasscodesView(HomeAssistantView):
 
         try:
             import time
+
             wrapper.recently_deleted_passcodes[uid] = time.time()
 
             if uid in wrapper.logical_passcodes:
                 del wrapper.logical_passcodes[uid]
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints
-                })
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                    }
+                )
 
-            if wrapper.device and wrapper.device.is_logged_in:
-                try:
-                    await wrapper.device.delete_passcode(uid)
-                except Exception as e:
-                    logger.warning("Failed to delete passcode %s from physical device: %s", uid, e)
-
-            # Force immediate sync
-            asyncio.create_task(wrapper._sync_and_apply_schedules())
+            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                if dev and getattr(dev, "is_logged_in", False):
+                    try:
+                        await dev.delete_passcode(uid)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to delete passcode %s from physical device: %s",
+                            uid,
+                            e,
+                        )
+                if hasattr(wrapper, "_sync_and_apply_schedules"):
+                    await wrapper._sync_and_apply_schedules()
 
             return self.json({"success": True})
         except Exception as e:
-            return self.json({"error": f"Failed to delete passcode: {e}"}, status_code=500)
+            return self.json(
+                {"error": f"Failed to delete passcode: {e}"}, status_code=500
+            )
 
 
 class SesameCardsView(HomeAssistantView):
@@ -365,24 +464,34 @@ class SesameCardsView(HomeAssistantView):
         # Check for duplicate card name
         for other_uid, other_info in wrapper.logical_cards.items():
             if other_uid != uid and other_info["name"].strip().lower() == name.lower():
-                return self.json({"error": f"An NFC card named '{name}' already exists"}, status_code=400)
+                return self.json(
+                    {"error": f"An NFC card named '{name}' already exists"},
+                    status_code=400,
+                )
 
         try:
             if uid in wrapper.logical_cards:
                 wrapper.logical_cards[uid]["name"] = name
                 wrapper.logical_cards[uid]["person_id"] = person_id
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints
-                })
-                if wrapper.device and wrapper.device.is_logged_in:
-                    try:
-                        await wrapper.device.update_card_name(uid, name)
-                        await wrapper.device.get_cards()
-                    except Exception as e:
-                        logger.warning("Failed to rename card on physical device: %s", e)
-                wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                    }
+                )
+                async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                    if dev and getattr(dev, "is_logged_in", False):
+                        try:
+                            await dev.update_card_name(uid, name)
+                            await dev.get_cards()
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to rename card on physical device: %s", e
+                            )
+                    wrapper._handle_status_update(
+                        dev, getattr(dev, "mech_status", None)
+                    )
                 return self.json({"success": True})
             else:
                 return self.json({"error": "Card not found"}, status_code=404)
@@ -408,23 +517,29 @@ class SesameCardsView(HomeAssistantView):
 
         try:
             import time
+
             wrapper.recently_deleted_cards[uid] = time.time()
 
             if uid in wrapper.logical_cards:
                 del wrapper.logical_cards[uid]
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints
-                })
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                    }
+                )
 
-            if wrapper.device and wrapper.device.is_logged_in:
-                try:
-                    await wrapper.device.delete_card(uid)
-                except Exception as e:
-                    logger.warning("Failed to delete card %s from physical device: %s", uid, e)
+            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                if dev and getattr(dev, "is_logged_in", False):
+                    try:
+                        await dev.delete_card(uid)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to delete card %s from physical device: %s", uid, e
+                        )
+                wrapper._handle_status_update(dev, getattr(dev, "mech_status", None))
 
-            asyncio.create_task(wrapper._sync_and_apply_schedules())
             return self.json({"success": True})
         except Exception as e:
             return self.json({"error": f"Failed to delete card: {e}"}, status_code=500)
@@ -467,56 +582,78 @@ class SesameFingerprintsView(HomeAssistantView):
         # Check for duplicate fingerprint name
         for other_uid, other_info in wrapper.logical_fingerprints.items():
             if other_uid != uid and other_info["name"].strip().lower() == name.lower():
-                return self.json({"error": f"A fingerprint named '{name}' already exists"}, status_code=400)
+                return self.json(
+                    {"error": f"A fingerprint named '{name}' already exists"},
+                    status_code=400,
+                )
 
         try:
             if uid in wrapper.logical_fingerprints:
                 wrapper.logical_fingerprints[uid]["name"] = name
                 wrapper.logical_fingerprints[uid]["person_id"] = person_id
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints
-                })
-                if wrapper.device and wrapper.device.is_logged_in:
-                    try:
-                        await wrapper.device.update_fingerprint_name(uid, name)
-                        await wrapper.device.get_fingerprints()
-                    except Exception as e:
-                        logger.warning("Failed to rename fingerprint on physical device: %s", e)
-                wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                    }
+                )
+                async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                    if dev and getattr(dev, "is_logged_in", False):
+                        try:
+                            await dev.update_fingerprint_name(uid, name)
+                            await dev.get_fingerprints()
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to rename fingerprint on physical device: %s", e
+                            )
+                    wrapper._handle_status_update(
+                        dev, getattr(dev, "mech_status", None)
+                    )
                 return self.json({"success": True})
-            elif getattr(wrapper.device, "scanned_fingerprint", None) and wrapper.device.scanned_fingerprint.get("uid") == uid:
+            elif (
+                getattr(wrapper.device, "scanned_fingerprint", None)
+                and wrapper.device.scanned_fingerprint.get("uid") == uid
+            ):
                 # Add to logical fingerprints
                 wrapper.logical_fingerprints[uid] = {
                     "name": name,
                     "type": wrapper.device.scanned_fingerprint.get("type", 0),
                     "person_id": person_id,
                 }
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints
-                })
-                if wrapper.device and wrapper.device.is_logged_in:
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                    }
+                )
+                async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                    if dev and getattr(dev, "is_logged_in", False):
+                        try:
+                            await dev.update_fingerprint_name(uid, name)
+                            await dev.get_fingerprints()
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to rename fingerprint on physical device: %s", e
+                            )
+
+                    # Stop registration mode and clear scanned_fingerprint
                     try:
-                        await wrapper.device.update_fingerprint_name(uid, name)
-                        await wrapper.device.get_fingerprints()
-                    except Exception as e:
-                        logger.warning("Failed to rename fingerprint on physical device: %s", e)
-                
-                # Stop registration mode and clear scanned_fingerprint
-                try:
-                    await wrapper.device.set_fingerprint_registration_mode(False)
-                except Exception:
-                    pass
-                wrapper.device.scanned_fingerprint = None
-                wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
+                        await dev.set_fingerprint_registration_mode(False)
+                    except Exception:
+                        pass
+                    dev.scanned_fingerprint = None
+                    wrapper._handle_status_update(
+                        dev, getattr(dev, "mech_status", None)
+                    )
                 return self.json({"success": True})
             else:
                 return self.json({"error": "Fingerprint not found"}, status_code=404)
         except Exception as e:
-            return self.json({"error": f"Failed to rename fingerprint: {e}"}, status_code=500)
+            return self.json(
+                {"error": f"Failed to rename fingerprint: {e}"}, status_code=500
+            )
 
     async def delete(self, request: web.Request) -> web.Response:
         """Delete a fingerprint."""
@@ -537,26 +674,36 @@ class SesameFingerprintsView(HomeAssistantView):
 
         try:
             import time
+
             wrapper.recently_deleted_fingerprints[uid] = time.time()
 
             if uid in wrapper.logical_fingerprints:
                 del wrapper.logical_fingerprints[uid]
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints
-                })
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                    }
+                )
 
-            if wrapper.device and wrapper.device.is_logged_in:
-                try:
-                    await wrapper.device.delete_fingerprint(uid)
-                except Exception as e:
-                    logger.warning("Failed to delete fingerprint %s from physical device: %s", uid, e)
+            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                if dev and getattr(dev, "is_logged_in", False):
+                    try:
+                        await dev.delete_fingerprint(uid)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to delete fingerprint %s from physical device: %s",
+                            uid,
+                            e,
+                        )
+                wrapper._handle_status_update(dev, getattr(dev, "mech_status", None))
 
-            asyncio.create_task(wrapper._sync_and_apply_schedules())
             return self.json({"success": True})
         except Exception as e:
-            return self.json({"error": f"Failed to delete fingerprint: {e}"}, status_code=500)
+            return self.json(
+                {"error": f"Failed to delete fingerprint: {e}"}, status_code=500
+            )
 
 
 class SesameFacesView(HomeAssistantView):
@@ -600,24 +747,34 @@ class SesameFacesView(HomeAssistantView):
             if uid in wrapper.logical_faces:
                 wrapper.logical_faces[uid]["name"] = name
                 wrapper.logical_faces[uid]["person_id"] = person_id
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints,
-                    "faces": wrapper.logical_faces,
-                    "palms": getattr(wrapper, "logical_palms", {}),
-                })
-                wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                        "faces": wrapper.logical_faces,
+                        "palms": getattr(wrapper, "logical_palms", {}),
+                    }
+                )
+                wrapper._handle_status_update(
+                    wrapper.device, wrapper.device.mech_status
+                )
                 return self.json({"success": True})
             else:
-                wrapper.logical_faces[uid] = {"name": name, "type": 0x80, "person_id": person_id}
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints,
-                    "faces": wrapper.logical_faces,
-                    "palms": getattr(wrapper, "logical_palms", {}),
-                })
+                wrapper.logical_faces[uid] = {
+                    "name": name,
+                    "type": 0x80,
+                    "person_id": person_id,
+                }
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                        "faces": wrapper.logical_faces,
+                        "palms": getattr(wrapper, "logical_palms", {}),
+                    }
+                )
                 return self.json({"success": True})
         except Exception as e:
             return self.json({"error": f"Failed to rename face: {e}"}, status_code=500)
@@ -642,15 +799,19 @@ class SesameFacesView(HomeAssistantView):
         try:
             if hasattr(wrapper, "logical_faces") and uid in wrapper.logical_faces:
                 del wrapper.logical_faces[uid]
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints,
-                    "faces": wrapper.logical_faces,
-                    "palms": getattr(wrapper, "logical_palms", {}),
-                })
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                        "faces": wrapper.logical_faces,
+                        "palms": getattr(wrapper, "logical_palms", {}),
+                    }
+                )
 
-            asyncio.create_task(wrapper._sync_and_apply_schedules())
+            wrapper._handle_status_update(
+                wrapper.device, getattr(wrapper.device, "mech_status", None)
+            )
             return self.json({"success": True})
         except Exception as e:
             return self.json({"error": f"Failed to delete face: {e}"}, status_code=500)
@@ -697,24 +858,34 @@ class SesamePalmsView(HomeAssistantView):
             if uid in wrapper.logical_palms:
                 wrapper.logical_palms[uid]["name"] = name
                 wrapper.logical_palms[uid]["person_id"] = person_id
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints,
-                    "faces": getattr(wrapper, "logical_faces", {}),
-                    "palms": wrapper.logical_palms,
-                })
-                wrapper._handle_status_update(wrapper.device, wrapper.device.mech_status)
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                        "faces": getattr(wrapper, "logical_faces", {}),
+                        "palms": wrapper.logical_palms,
+                    }
+                )
+                wrapper._handle_status_update(
+                    wrapper.device, wrapper.device.mech_status
+                )
                 return self.json({"success": True})
             else:
-                wrapper.logical_palms[uid] = {"name": name, "type": 0x80, "person_id": person_id}
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints,
-                    "faces": getattr(wrapper, "logical_faces", {}),
-                    "palms": wrapper.logical_palms,
-                })
+                wrapper.logical_palms[uid] = {
+                    "name": name,
+                    "type": 0x80,
+                    "person_id": person_id,
+                }
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                        "faces": getattr(wrapper, "logical_faces", {}),
+                        "palms": wrapper.logical_palms,
+                    }
+                )
                 return self.json({"success": True})
         except Exception as e:
             return self.json({"error": f"Failed to rename palm: {e}"}, status_code=500)
@@ -739,22 +910,25 @@ class SesamePalmsView(HomeAssistantView):
         try:
             if hasattr(wrapper, "logical_palms") and uid in wrapper.logical_palms:
                 del wrapper.logical_palms[uid]
-                await wrapper.store.async_save({
-                    "passcodes": wrapper.logical_passcodes,
-                    "cards": wrapper.logical_cards,
-                    "fingerprints": wrapper.logical_fingerprints,
-                    "faces": getattr(wrapper, "logical_faces", {}),
-                    "palms": wrapper.logical_palms,
-                })
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                        "faces": getattr(wrapper, "logical_faces", {}),
+                        "palms": wrapper.logical_palms,
+                    }
+                )
 
-            asyncio.create_task(wrapper._sync_and_apply_schedules())
+            wrapper._handle_status_update(
+                wrapper.device, getattr(wrapper.device, "mech_status", None)
+            )
             return self.json({"success": True})
         except Exception as e:
             return self.json({"error": f"Failed to delete palm: {e}"}, status_code=500)
 
 
 class SesameCardsRegisterView(HomeAssistantView):
-
     """View to handle card registration mode (start/stop/status)."""
 
     url = "/api/sesame_ble/cards/register"
@@ -775,35 +949,56 @@ class SesameCardsRegisterView(HomeAssistantView):
 
         entry_id = data.get("entry_id")
         action = data.get("action")  # "start", "stop"
-        logger.info("SesameCardsRegisterView: received POST request: entry_id=%s, action=%s", entry_id, action)
+        logger.info(
+            "SesameCardsRegisterView: received POST request: entry_id=%s, action=%s",
+            entry_id,
+            action,
+        )
 
         if not entry_id or entry_id not in self.hass.data[DOMAIN]:
-            logger.warning("SesameCardsRegisterView: Invalid or missing entry_id: %s", entry_id)
+            logger.warning(
+                "SesameCardsRegisterView: Invalid or missing entry_id: %s", entry_id
+            )
             return self.json({"error": "Invalid entry_id"}, status_code=400)
         if action not in ("start", "stop"):
             logger.warning("SesameCardsRegisterView: Invalid action: %s", action)
-            return self.json({"error": "Invalid action (must be 'start' or 'stop')"}, status_code=400)
+            return self.json(
+                {"error": "Invalid action (must be 'start' or 'stop')"}, status_code=400
+            )
 
         wrapper = self.hass.data[DOMAIN][entry_id]
-        if not wrapper.device or not wrapper.device.is_logged_in:
-            logger.warning("SesameCardsRegisterView: Device for entry_id %s is not connected or logged in", entry_id)
-            return self.json({"error": "Device is not connected or logged in"}, status_code=503)
 
         try:
-            if action == "start":
-                wrapper.device.scanned_card = None
-                logger.info("SesameCardsRegisterView: Starting card registration mode for device %s", wrapper.device.mac_address)
-                await wrapper.device.set_card_registration_mode(True)
-                logger.info("SesameCardsRegisterView: Successfully set card registration mode to True on device")
-            else:
-                logger.info("SesameCardsRegisterView: Stopping card registration mode for device %s", wrapper.device.mac_address)
-                await wrapper.device.set_card_registration_mode(False)
-                wrapper.device.scanned_card = None
-                logger.info("SesameCardsRegisterView: Successfully set card registration mode to False on device")
+            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                if action == "start":
+                    dev.scanned_card = None
+                    logger.info(
+                        "SesameCardsRegisterView: Starting card registration mode for device %s",
+                        getattr(dev, "mac_address", "keypad"),
+                    )
+                    await dev.set_card_registration_mode(True)
+                    logger.info(
+                        "SesameCardsRegisterView: Successfully set card registration mode to True on device"
+                    )
+                else:
+                    logger.info(
+                        "SesameCardsRegisterView: Stopping card registration mode for device %s",
+                        getattr(dev, "mac_address", "keypad"),
+                    )
+                    await dev.set_card_registration_mode(False)
+                    dev.scanned_card = None
+                    logger.info(
+                        "SesameCardsRegisterView: Successfully set card registration mode to False on device"
+                    )
+                wrapper._handle_status_update(dev, getattr(dev, "mech_status", None))
             return self.json({"success": True})
         except Exception as e:
-            logger.exception("SesameCardsRegisterView: Failed to modify registration mode for device %s", wrapper.device.mac_address)
-            return self.json({"error": f"Failed to modify registration mode: {e}"}, status_code=500)
+            logger.exception(
+                "SesameCardsRegisterView: Failed to modify registration mode: %s", e
+            )
+            return self.json(
+                {"error": f"Failed to modify registration mode: {e}"}, status_code=500
+            )
 
 
 class SesameFingerprintsRegisterView(HomeAssistantView):
@@ -822,40 +1017,65 @@ class SesameFingerprintsRegisterView(HomeAssistantView):
         try:
             data = await request.json()
         except ValueError:
-            logger.warning("SesameFingerprintsRegisterView: Invalid JSON payload received")
+            logger.warning(
+                "SesameFingerprintsRegisterView: Invalid JSON payload received"
+            )
             return self.json({"error": "Invalid JSON payload"}, status_code=400)
 
         entry_id = data.get("entry_id")
         action = data.get("action")  # "start", "stop"
-        logger.info("SesameFingerprintsRegisterView: received POST request: entry_id=%s, action=%s", entry_id, action)
+        logger.info(
+            "SesameFingerprintsRegisterView: received POST request: entry_id=%s, action=%s",
+            entry_id,
+            action,
+        )
 
         if not entry_id or entry_id not in self.hass.data[DOMAIN]:
-            logger.warning("SesameFingerprintsRegisterView: Invalid or missing entry_id: %s", entry_id)
+            logger.warning(
+                "SesameFingerprintsRegisterView: Invalid or missing entry_id: %s",
+                entry_id,
+            )
             return self.json({"error": "Invalid entry_id"}, status_code=400)
         if action not in ("start", "stop"):
             logger.warning("SesameFingerprintsRegisterView: Invalid action: %s", action)
-            return self.json({"error": "Invalid action (must be 'start' or 'stop')"}, status_code=400)
+            return self.json(
+                {"error": "Invalid action (must be 'start' or 'stop')"}, status_code=400
+            )
 
         wrapper = self.hass.data[DOMAIN][entry_id]
-        if not wrapper.device or not wrapper.device.is_logged_in:
-            logger.warning("SesameFingerprintsRegisterView: Device for entry_id %s is not connected or logged in", entry_id)
-            return self.json({"error": "Device is not connected or logged in"}, status_code=503)
 
         try:
-            if action == "start":
-                wrapper.device.scanned_fingerprint = None
-                logger.info("SesameFingerprintsRegisterView: Starting fingerprint registration mode for device %s", wrapper.device.mac_address)
-                await wrapper.device.set_fingerprint_registration_mode(True)
-                logger.info("SesameFingerprintsRegisterView: Successfully set fingerprint registration mode to True on device")
-            else:
-                logger.info("SesameFingerprintsRegisterView: Stopping fingerprint registration mode for device %s", wrapper.device.mac_address)
-                await wrapper.device.set_fingerprint_registration_mode(False)
-                wrapper.device.scanned_fingerprint = None
-                logger.info("SesameFingerprintsRegisterView: Successfully set fingerprint registration mode to False on device")
+            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                if action == "start":
+                    dev.scanned_fingerprint = None
+                    logger.info(
+                        "SesameFingerprintsRegisterView: Starting fingerprint registration mode for device %s",
+                        getattr(dev, "mac_address", "keypad"),
+                    )
+                    await dev.set_fingerprint_registration_mode(True)
+                    logger.info(
+                        "SesameFingerprintsRegisterView: Successfully set fingerprint registration mode to True on device"
+                    )
+                else:
+                    logger.info(
+                        "SesameFingerprintsRegisterView: Stopping fingerprint registration mode for device %s",
+                        getattr(dev, "mac_address", "keypad"),
+                    )
+                    await dev.set_fingerprint_registration_mode(False)
+                    dev.scanned_fingerprint = None
+                    logger.info(
+                        "SesameFingerprintsRegisterView: Successfully set fingerprint registration mode to False on device"
+                    )
+                wrapper._handle_status_update(dev, getattr(dev, "mech_status", None))
             return self.json({"success": True})
         except Exception as e:
-            logger.exception("SesameFingerprintsRegisterView: Failed to modify registration mode for device %s", wrapper.device.mac_address)
-            return self.json({"error": f"Failed to modify registration mode: {e}"}, status_code=500)
+            logger.exception(
+                "SesameFingerprintsRegisterView: Failed to modify registration mode: %s",
+                e,
+            )
+            return self.json(
+                {"error": f"Failed to modify registration mode: {e}"}, status_code=500
+            )
 
 
 class SesamePasscodesRegisterView(HomeAssistantView):
@@ -879,35 +1099,56 @@ class SesamePasscodesRegisterView(HomeAssistantView):
 
         entry_id = data.get("entry_id")
         action = data.get("action")  # "start", "stop"
-        logger.info("SesamePasscodesRegisterView: received POST request: entry_id=%s, action=%s", entry_id, action)
+        logger.info(
+            "SesamePasscodesRegisterView: received POST request: entry_id=%s, action=%s",
+            entry_id,
+            action,
+        )
 
         if not entry_id or entry_id not in self.hass.data[DOMAIN]:
-            logger.warning("SesamePasscodesRegisterView: Invalid or missing entry_id: %s", entry_id)
+            logger.warning(
+                "SesamePasscodesRegisterView: Invalid or missing entry_id: %s", entry_id
+            )
             return self.json({"error": "Invalid entry_id"}, status_code=400)
         if action not in ("start", "stop"):
             logger.warning("SesamePasscodesRegisterView: Invalid action: %s", action)
-            return self.json({"error": "Invalid action (must be 'start' or 'stop')"}, status_code=400)
+            return self.json(
+                {"error": "Invalid action (must be 'start' or 'stop')"}, status_code=400
+            )
 
         wrapper = self.hass.data[DOMAIN][entry_id]
-        if not wrapper.device or not wrapper.device.is_logged_in:
-            logger.warning("SesamePasscodesRegisterView: Device for entry_id %s is not connected or logged in", entry_id)
-            return self.json({"error": "Device is not connected or logged in"}, status_code=503)
 
         try:
-            if action == "start":
-                wrapper.device.scanned_passcode = None
-                logger.info("SesamePasscodesRegisterView: Starting passcode registration mode for device %s", wrapper.device.mac_address)
-                await wrapper.device.set_passcode_registration_mode(True)
-                logger.info("SesamePasscodesRegisterView: Successfully set passcode registration mode to True on device")
-            else:
-                logger.info("SesamePasscodesRegisterView: Stopping passcode registration mode for device %s", wrapper.device.mac_address)
-                await wrapper.device.set_passcode_registration_mode(False)
-                wrapper.device.scanned_passcode = None
-                logger.info("SesamePasscodesRegisterView: Successfully set passcode registration mode to False on device")
+            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                if action == "start":
+                    dev.scanned_passcode = None
+                    logger.info(
+                        "SesamePasscodesRegisterView: Starting passcode registration mode for device %s",
+                        getattr(dev, "mac_address", "keypad"),
+                    )
+                    await dev.set_passcode_registration_mode(True)
+                    logger.info(
+                        "SesamePasscodesRegisterView: Successfully set passcode registration mode to True on device"
+                    )
+                else:
+                    logger.info(
+                        "SesamePasscodesRegisterView: Stopping passcode registration mode for device %s",
+                        getattr(dev, "mac_address", "keypad"),
+                    )
+                    await dev.set_passcode_registration_mode(False)
+                    dev.scanned_passcode = None
+                    logger.info(
+                        "SesamePasscodesRegisterView: Successfully set passcode registration mode to False on device"
+                    )
+                wrapper._handle_status_update(dev, getattr(dev, "mech_status", None))
             return self.json({"success": True})
         except Exception as e:
-            logger.exception("SesamePasscodesRegisterView: Failed to modify registration mode for device %s", wrapper.device.mac_address)
-            return self.json({"error": f"Failed to modify registration mode: {e}"}, status_code=500)
+            logger.exception(
+                "SesamePasscodesRegisterView: Failed to modify registration mode: %s", e
+            )
+            return self.json(
+                {"error": f"Failed to modify registration mode: {e}"}, status_code=500
+            )
 
 
 class SesameCardsAddView(HomeAssistantView):
@@ -944,43 +1185,49 @@ class SesameCardsAddView(HomeAssistantView):
             return self.json({"error": "Name is required"}, status_code=400)
 
         wrapper = self.hass.data[DOMAIN][entry_id]
-        if not wrapper.device or not wrapper.device.is_logged_in:
-            return self.json({"error": "Device is not connected or logged in"}, status_code=503)
 
         # Check for duplicate card name (case-insensitive)
         for other_uid, other_info in wrapper.logical_cards.items():
             if other_info["name"].strip().lower() == name.lower():
-                return self.json({"error": f"An NFC card named '{name}' already exists"}, status_code=400)
+                return self.json(
+                    {"error": f"An NFC card named '{name}' already exists"},
+                    status_code=400,
+                )
 
         try:
-            # 1. Add physically via BLE
-            await wrapper.device.add_card(uid, name, card_type)
+            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                # 1. Add physically via BLE
+                await dev.add_card(uid, name, card_type)
 
-            # 2. Add logically
-            wrapper.logical_cards[uid] = {
-                "name": name,
-                "type": card_type,
-                "person_id": person_id,
-            }
-            await wrapper.store.async_save({
-                "passcodes": wrapper.logical_passcodes,
-                "cards": wrapper.logical_cards,
-                "fingerprints": wrapper.logical_fingerprints
-            })
+                # 2. Add logically
+                wrapper.logical_cards[uid] = {
+                    "name": name,
+                    "type": card_type,
+                    "person_id": person_id,
+                }
+                await wrapper.store.async_save(
+                    {
+                        "passcodes": wrapper.logical_passcodes,
+                        "cards": wrapper.logical_cards,
+                        "fingerprints": wrapper.logical_fingerprints,
+                    }
+                )
 
-            # 3. Stop registration mode and clear scanned_card
-            try:
-                await wrapper.device.set_card_registration_mode(False)
-            except Exception:
-                pass
-            wrapper.device.scanned_card = None
+                # 3. Stop registration mode and clear scanned_card
+                try:
+                    await dev.set_card_registration_mode(False)
+                except Exception:
+                    pass
+                dev.scanned_card = None
 
-            # 4. Trigger sync and HA refresh
-            asyncio.create_task(wrapper._sync_and_apply_schedules())
+                # 4. Notify listeners of state update
+                wrapper._handle_status_update(dev, getattr(dev, "mech_status", None))
 
             return self.json({"success": True})
         except Exception as e:
-            return self.json({"error": f"Failed to register card: {e}"}, status_code=500)
+            return self.json(
+                {"error": f"Failed to register card: {e}"}, status_code=500
+            )
 
 
 class SesameLockHistoryView(HomeAssistantView):
@@ -997,11 +1244,15 @@ class SesameLockHistoryView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.Response:
         """Retrieve lock history logs."""
         entry_id = request.query.get("entry_id")
-        if not entry_id or DOMAIN not in self.hass.data or entry_id not in self.hass.data[DOMAIN]:
+        if (
+            not entry_id
+            or DOMAIN not in self.hass.data
+            or entry_id not in self.hass.data[DOMAIN]
+        ):
             return self.json({"error": "Invalid entry_id"}, status_code=400)
 
         keypad_wrapper = self.hass.data[DOMAIN][entry_id]
-        
+
         # Resolve paired lock wrapper
         lock_wrapper = self._find_paired_lock(entry_id)
         if not lock_wrapper:
@@ -1026,37 +1277,35 @@ class SesameLockHistoryView(HomeAssistantView):
             except Exception as e:
                 logger.warning("Failed to resolve history record %s: %s", record, e)
 
-        return self.json({
-            "lock_name": lock_wrapper.entry.title,
-            "history": formatted_history
-        })
+        return self.json(
+            {"lock_name": lock_wrapper.entry.title, "history": formatted_history}
+        )
 
     def _find_paired_lock(self, keypad_entry_id: str) -> SesameDeviceWrapper | None:
         """Find the lock paired with the keypad."""
         if DOMAIN not in self.hass.data:
             return None
-            
+
         keypad_wrapper = self.hass.data[DOMAIN].get(keypad_entry_id)
         if not keypad_wrapper:
             return None
-            
+
         locks = []
         for entry_id, wrapper in self.hass.data[DOMAIN].items():
             if not is_keypad_model(getattr(wrapper, "model_name", None)):
                 locks.append(wrapper)
 
-                
         if not locks:
             return None
-            
+
         if len(locks) == 1:
             return locks[0]
-            
+
         keypad_title = keypad_wrapper.entry.title.lower()
         for word in ("keypad", "touch", "pro", "sesame"):
             keypad_title = keypad_title.replace(word, "")
         keypad_title = keypad_title.strip()
-        
+
         best_match = None
         best_score = 0
         for lock in locks:
@@ -1064,16 +1313,20 @@ class SesameLockHistoryView(HomeAssistantView):
             for word in ("lock", "sesame"):
                 lock_title = lock_title.replace(word, "")
             lock_title = lock_title.strip()
-            
-            if keypad_title and lock_title and (keypad_title in lock_title or lock_title in keypad_title):
+
+            if (
+                keypad_title
+                and lock_title
+                and (keypad_title in lock_title or lock_title in keypad_title)
+            ):
                 score = min(len(keypad_title), len(lock_title))
                 if score > best_score:
                     best_score = score
                     best_match = lock
-                    
+
         if best_match:
             return best_match
-            
+
         return locks[0]
 
 
@@ -1106,15 +1359,14 @@ class SesameKeypadPairView(HomeAssistantView):
         keypad_wrapper = self.hass.data[DOMAIN][entry_id]
         lock_wrapper = self.hass.data[DOMAIN][lock_entry_id]
 
-        if not keypad_wrapper.device or not keypad_wrapper.device.is_logged_in:
-            return self.json({"error": "Keypad is not connected or logged in"}, status_code=503)
-
         try:
-            from uuid import UUID
             lock_uuid = lock_wrapper.adv_data.device_uuid
             secret_key_bytes = bytes.fromhex(lock_wrapper.secret_key)
-            
-            await keypad_wrapper.device.add_paired_lock(lock_uuid, secret_key_bytes)
+            async with on_demand_connection(keypad_wrapper, timeout=10.0) as dev:
+                await dev.add_paired_lock(lock_uuid, secret_key_bytes)
+                keypad_wrapper._handle_status_update(
+                    dev, getattr(dev, "mech_status", None)
+                )
             return self.json({"success": True})
         except Exception as e:
             return self.json({"error": f"Failed to pair lock: {e}"}, status_code=500)
@@ -1148,12 +1400,47 @@ class SesameKeypadUnpairView(HomeAssistantView):
 
         keypad_wrapper = self.hass.data[DOMAIN][entry_id]
 
-        if not keypad_wrapper.device or not keypad_wrapper.device.is_logged_in:
-            return self.json({"error": "Keypad is not connected or logged in"}, status_code=503)
-
         try:
             from uuid import UUID
-            await keypad_wrapper.device.remove_paired_lock(UUID(lock_uuid))
+
+            async with on_demand_connection(keypad_wrapper, timeout=10.0) as dev:
+                await dev.remove_paired_lock(UUID(lock_uuid))
+                keypad_wrapper._handle_status_update(
+                    dev, getattr(dev, "mech_status", None)
+                )
             return self.json({"success": True})
         except Exception as e:
             return self.json({"error": f"Failed to unpair lock: {e}"}, status_code=500)
+
+
+class SesameKeypadSyncView(HomeAssistantView):
+    """View to explicitly trigger a sync of keypad credentials and battery status."""
+
+    url = "/api/sesame_ble/keypad/sync"
+    name = "api:sesame_ble:keypad:sync"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the view."""
+        self.hass = hass
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Trigger keypad sync."""
+        try:
+            data = await request.json()
+        except ValueError:
+            return self.json({"error": "Invalid JSON payload"}, status_code=400)
+
+        entry_id = data.get("entry_id")
+        if not entry_id or entry_id not in self.hass.data[DOMAIN]:
+            return self.json({"error": "Invalid entry_id"}, status_code=400)
+
+        wrapper = self.hass.data[DOMAIN][entry_id]
+        if not is_keypad_model(getattr(wrapper, "model_name", None)):
+            return self.json({"error": "Device is not a keypad"}, status_code=400)
+
+        try:
+            await wrapper.async_sync_keypad_credentials()
+            return self.json({"success": True})
+        except Exception as e:
+            return self.json({"error": f"Failed to sync keypad: {e}"}, status_code=500)

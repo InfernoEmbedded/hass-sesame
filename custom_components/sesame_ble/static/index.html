@@ -566,6 +566,7 @@
           <div class="status-dot"></div>
           <span id="status-text">Disconnected</span>
         </div>
+        <button id="btn-sync-keypad" class="btn" style="width: auto; padding: 8px 16px; background: var(--secondary-background-color); border: 1px solid var(--panel-border);" onclick="triggerKeypadSync()">🔄 Sync Keypad</button>
         <button id="btn-show-qr" class="btn" style="width: auto; padding: 8px 16px; background: var(--secondary-background-color); border: 1px solid var(--panel-border);" onclick="showQRCodeModal()">📱 App QR Code</button>
       </div>
     </header>
@@ -1146,8 +1147,13 @@
 
       // Render Connection Status
       statusBadge.style.display = "inline-flex";
-      statusBadge.className = "status-badge " + (keypad.is_logged_in ? "status-connected" : "status-disconnected");
-      statusText.innerText = keypad.is_logged_in ? "Online" : "Connecting...";
+      const isOnline = keypad.is_logged_in || keypad.is_available;
+      statusBadge.className = "status-badge " + (isOnline ? "status-connected" : "status-disconnected");
+      let statusStr = keypad.is_logged_in ? "Connected" : (keypad.is_available ? "Standby" : "Offline");
+      if (keypad.battery_percentage != null) {
+        statusStr += ` (${keypad.battery_percentage}%)`;
+      }
+      statusText.innerText = statusStr;
 
       // Render Passcodes
       const passcodesList = document.getElementById("passcodes-list");
@@ -2318,6 +2324,37 @@
         }
       } catch (err) {
         console.error("Error unpairing lock:", err);
+      }
+    }
+
+    async function triggerKeypadSync() {
+      const hass = window.hass || window.parent.hass;
+      if (!hass || !currentKeypadEntryId) return;
+
+      const btn = document.getElementById("btn-sync-keypad");
+      const originalText = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = "⏳ Syncing...";
+
+      try {
+        const response = await hass.fetchWithAuth("/api/sesame_ble/keypad/sync", {
+          method: "POST",
+          body: JSON.stringify({
+            entry_id: currentKeypadEntryId
+          })
+        });
+        const res = await response.json();
+        if (res.error) {
+          alert("Keypad sync failed: " + res.error);
+        } else {
+          await loadKeypads(true);
+        }
+      } catch (err) {
+        console.error("Error syncing keypad:", err);
+        alert("Failed to sync keypad: " + err);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
       }
     }
 
