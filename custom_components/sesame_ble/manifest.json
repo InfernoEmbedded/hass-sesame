@@ -5,7 +5,7 @@
   "config_flow": true,
   "iot_class": "local_push",
   "requirements": [
-    "pysesame-ble>=0.1.0",
+    "pysesame-ble @ git+https://github.com/InfernoEmbedded/pysesame-ble.git@v0.1.0",
     "bleak-retry-connector>=3.0.0",
     "pyzbar>=0.1.9",
     "Pillow>=10.0.0",

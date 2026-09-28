@@ -4,7 +4,7 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
 [![Stability: Stable](https://img.shields.io/badge/Stability-Stable-green.svg)](#)
 
-A high-performance, fully local Home Assistant custom integration for controlling and managing **Candy House Sesame 5 / 5 Pro** locks and **Sesame Touch / Touch Pro** keypads directly via Bluetooth Low Energy (BLE) based on the [official Candy House API documentation](https://github.com/CANDY-HOUSE/API_document).
+A high-performance, fully local Home Assistant custom integration for controlling and managing **Candy House Sesame 5 / 5 Pro** locks and **Sesame Touch / Touch Pro** keypads directly via Bluetooth Low Energy (BLE) powered by the standalone [`pysesame-ble`](https://github.com/InfernoEmbedded/pysesame-ble) library based on the [official Candy House API documentation](https://github.com/CANDY-HOUSE/API_document).
 
 > [!NOTE]
 > This integration operates **100% locally** over Bluetooth. It does not require a Candy House Wi-Fi Hub, active internet connection, or cloud API credentials.
@@ -20,7 +20,7 @@ A high-performance, fully local Home Assistant custom integration for controllin
 - 🔢 **Sesame Touch Sensor Suite**: Exposes metrics for registered credentials (fingerprint count, card count, and passcode count).
 - 🏷️ **Passcode Database Sync**: Dynamically syncs and lists all registered passcodes (names and unique identifiers) inside the passcode sensor's extra attributes.
 - ⚙️ **Keypad Passcode Management**: Direct services to **Add**, **Delete**, and **Update/Rename** keypad PIN codes directly from Home Assistant.
-- 🔌 **Stable Connection Backend**: Uses Home Assistant's native BLE framework (`BLEDevice`) and connection retry connector (`bleak-retry-connector`) to work flawlessly with Bluetooth USB dongles and Bluetooth Proxies (ESPHome).
+- 🔌 **Stable Connection Backend**: Powered by [`pysesame-ble`](https://github.com/InfernoEmbedded/pysesame-ble) using Home Assistant's native BLE framework (`BLEDevice`) and connection retry connector (`bleak-retry-connector`) to work flawlessly with Bluetooth USB dongles and Bluetooth Proxies (ESPHome).
 - 📱 **QR Code Setup**: Automatically parses `ssm://` setup URLs extracted from the official Candy House mobile app's QR codes to auto-populate UUIDs and Secret Keys.
 
 ---
