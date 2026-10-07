@@ -974,8 +974,27 @@
     let currentKeypadEntryId = "";
     let revealedPINs = new Set();
 
+    function getHass() {
+      if (window.hass) return window.hass;
+      if (window.parent && window.parent.hass) return window.parent.hass;
+      try {
+        if (window.frameElement && window.frameElement.parentElement && window.frameElement.parentElement._hass) {
+          window.hass = window.frameElement.parentElement._hass;
+          return window.hass;
+        }
+      } catch (e) {}
+      try {
+        const ha = window.top && window.top.document.querySelector("home-assistant");
+        if (ha && ha.hass) {
+          window.hass = ha.hass;
+          return window.hass;
+        }
+      } catch (e) {}
+      return null;
+    }
+
     function getPersonEntities() {
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !hass.states) return [];
       return Object.keys(hass.states)
         .filter(entityId => entityId.startsWith("person."))
@@ -1086,7 +1105,7 @@
       const now = Date.now();
       if (!force && (now - lastFetchTime < 3000)) return;
 
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass) return;
 
       isFetchingKeypads = true;
@@ -1205,7 +1224,7 @@
 
           let personBadgeHTML = "";
           if (p.person_id) {
-            const hass = window.hass || window.parent.hass;
+            const hass = getHass();
             const personState = hass && hass.states ? hass.states[p.person_id] : null;
             const personName = personState ? (personState.attributes.friendly_name || p.person_id.split(".")[1]) : p.person_id;
             personBadgeHTML = `<span class="badge" style="background: rgba(233, 30, 99, 0.1); border-color: #e91e63; color: #e91e63; margin-left: 4px;">👤 ${escapeHTML(personName)}</span>`;
@@ -1294,7 +1313,7 @@
         keypad.cards.forEach(c => {
           let personBadgeHTML = "";
           if (c.person_id) {
-            const hass = window.hass || window.parent.hass;
+            const hass = getHass();
             const personState = hass && hass.states ? hass.states[c.person_id] : null;
             const personName = personState ? (personState.attributes.friendly_name || c.person_id.split(".")[1]) : c.person_id;
             personBadgeHTML = `<span class="badge" style="background: rgba(233, 30, 99, 0.1); border-color: #e91e63; color: #e91e63; margin-left: 4px;">👤 ${escapeHTML(personName)}</span>`;
@@ -1335,7 +1354,7 @@
         keypad.fingerprints.forEach(f => {
           let personBadgeHTML = "";
           if (f.person_id) {
-            const hass = window.hass || window.parent.hass;
+            const hass = getHass();
             const personState = hass && hass.states ? hass.states[f.person_id] : null;
             const personName = personState ? (personState.attributes.friendly_name || f.person_id.split(".")[1]) : f.person_id;
             personBadgeHTML = `<span class="badge" style="background: rgba(233, 30, 99, 0.1); border-color: #e91e63; color: #e91e63; margin-left: 4px;">👤 ${escapeHTML(personName)}</span>`;
@@ -1381,7 +1400,7 @@
         keypad.faces.forEach(f => {
           let personBadgeHTML = "";
           if (f.person_id) {
-            const hass = window.hass || window.parent.hass;
+            const hass = getHass();
             const personState = hass && hass.states ? hass.states[f.person_id] : null;
             const personName = personState ? (personState.attributes.friendly_name || f.person_id.split(".")[1]) : f.person_id;
             personBadgeHTML = `<span class="badge" style="background: rgba(233, 30, 99, 0.1); border-color: #e91e63; color: #e91e63; margin-left: 4px;">👤 ${escapeHTML(personName)}</span>`;
@@ -1426,7 +1445,7 @@
         keypad.palms.forEach(p => {
           let personBadgeHTML = "";
           if (p.person_id) {
-            const hass = window.hass || window.parent.hass;
+            const hass = getHass();
             const personState = hass && hass.states ? hass.states[p.person_id] : null;
             const personName = personState ? (personState.attributes.friendly_name || p.person_id.split(".")[1]) : p.person_id;
             personBadgeHTML = `<span class="badge" style="background: rgba(233, 30, 99, 0.1); border-color: #e91e63; color: #e91e63; margin-left: 4px;">👤 ${escapeHTML(personName)}</span>`;
@@ -1566,7 +1585,7 @@
     // Passcode Add/Edit Submit
     async function handlePasscodeSubmit(e) {
       e.preventDefault();
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       const uid = document.getElementById("edit-uid").value;
@@ -1710,7 +1729,7 @@
 
     async function deletePasscode(uid) {
       if (!confirm("Are you sure you want to delete this passcode?")) return;
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -1744,7 +1763,7 @@
 
     async function handleRenameSubmit(e) {
       e.preventDefault();
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       const uid = document.getElementById("rename-uid").value;
@@ -1784,7 +1803,7 @@
     // Delete Cards/Fingerprints/Faces/Palms
     async function deleteCard(uid) {
       if (!confirm("Are you sure you want to delete this NFC card?")) return;
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -1803,7 +1822,7 @@
 
     async function deleteFingerprint(uid) {
       if (!confirm("Are you sure you want to delete this fingerprint?")) return;
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -1822,7 +1841,7 @@
 
     async function deleteFace(uid) {
       if (!confirm("Are you sure you want to delete this face?")) return;
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -1841,7 +1860,7 @@
 
     async function deletePalm(uid) {
       if (!confirm("Are you sure you want to delete this palm?")) return;
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -1916,7 +1935,7 @@
     let cardRegPollInterval = null;
 
     async function startCardRegistration() {
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -1978,7 +1997,7 @@
       cardRegModalOpen = false;
       document.getElementById("card-reg-modal").style.display = "none";
 
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -1996,7 +2015,7 @@
 
     async function handleCardAddSubmit(e) {
       e.preventDefault();
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       const uid = document.getElementById("card-add-uid").value;
@@ -2033,7 +2052,7 @@
     let fingerprintRegPollInterval = null;
 
     async function startFingerprintRegistration() {
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -2093,7 +2112,7 @@
       fingerprintRegModalOpen = false;
       document.getElementById("fingerprint-reg-modal").style.display = "none";
 
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -2111,7 +2130,7 @@
 
     async function handleFingerprintAddSubmit(e) {
       e.preventDefault();
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       const uid = document.getElementById("fingerprint-add-uid").value;
@@ -2145,7 +2164,7 @@
     let passcodeRegPollInterval = null;
 
     async function startPasscodeRegistration() {
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -2213,7 +2232,7 @@
       passcodeRegModalOpen = false;
       document.getElementById("passcode-reg-modal").style.display = "none";
 
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -2231,7 +2250,7 @@
 
     async function handlePasscodeAddSubmit(e) {
       e.preventDefault();
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       const uid = document.getElementById("passcode-add-uid").value;
@@ -2277,7 +2296,7 @@
     // --- Lock Pairing JS ---
     async function handlePairSubmit(e) {
       e.preventDefault();
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       const lockSelect = document.getElementById("pair-lock-select");
@@ -2305,7 +2324,7 @@
 
     async function unpairLock(uuid) {
       if (!confirm("Are you sure you want to unpair this lock from the keypad?")) return;
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       try {
@@ -2328,7 +2347,7 @@
     }
 
     async function triggerKeypadSync() {
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass || !currentKeypadEntryId) return;
 
       const btn = document.getElementById("btn-sync-keypad");
@@ -2361,7 +2380,7 @@
     // --- Access Logs / History JS ---
     async function loadHistory(forceRefresh = false) {
       if (!currentKeypadEntryId) return;
-      const hass = window.hass || window.parent.hass;
+      const hass = getHass();
       if (!hass) return;
 
       const historyList = document.getElementById("history-list");

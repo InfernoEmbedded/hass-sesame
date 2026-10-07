@@ -777,7 +777,11 @@ class SesameBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return SesameBleOptionsFlowHandler(config_entry)
 
 
-OptionsFlowBase = getattr(config_entries, "OptionsFlow", object)
+OptionsFlowBase = getattr(
+    config_entries,
+    "OptionsFlowWithConfigEntry",
+    getattr(config_entries, "OptionsFlow", object),
+)
 
 
 class SesameBleOptionsFlowHandler(OptionsFlowBase):
@@ -785,7 +789,17 @@ class SesameBleOptionsFlowHandler(OptionsFlowBase):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize Sesame BLE options flow."""
-        self.config_entry = config_entry
+        if hasattr(super(), "__init__"):
+            try:
+                super().__init__(config_entry)
+            except TypeError:
+                super().__init__()
+        self._config_entry = config_entry
+
+    @property
+    def config_entry(self) -> config_entries.ConfigEntry:
+        """Return config entry."""
+        return getattr(self, "_config_entry", None) or super().config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

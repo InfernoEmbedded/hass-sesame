@@ -232,27 +232,21 @@ class SesameDeviceWrapper:
             return False
 
         try:
-            if (
-                bluetooth.async_ble_device_from_address(
-                    self.hass, address, connectable=False
-                )
-                is not None
-            ):
-                return True
-            if (
-                bluetooth.async_ble_device_from_address(
-                    self.hass, address.lower(), connectable=False
-                )
-                is not None
-            ):
-                return True
-            if bluetooth.async_last_service_info(self.hass, address) is not None:
-                return True
-            if (
-                bluetooth.async_last_service_info(self.hass, address.lower())
-                is not None
-            ):
-                return True
+            for addr in (address, address.lower(), address.upper()):
+                if (
+                    bluetooth.async_ble_device_from_address(
+                        self.hass, addr, connectable=False
+                    )
+                    is not None
+                ):
+                    return True
+                if (
+                    bluetooth.async_last_service_info(
+                        self.hass, addr, connectable=False
+                    )
+                    is not None
+                ):
+                    return True
         except Exception:
             pass
 
@@ -477,6 +471,20 @@ class SesameDeviceWrapper:
     async def async_connect(self) -> None:
         """Connect and authenticate with the device."""
         try:
+            address = getattr(getattr(self, "ble_device", None), "address", None)
+            if address:
+                for addr in (address, address.lower(), address.upper()):
+                    fresh_ble = bluetooth.async_ble_device_from_address(
+                        self.hass, addr, connectable=True
+                    ) or bluetooth.async_ble_device_from_address(
+                        self.hass, addr, connectable=False
+                    )
+                    if fresh_ble:
+                        self.ble_device = fresh_ble
+                        if hasattr(self.device, "set_ble_device"):
+                            self.device.set_ble_device(fresh_ble)
+                        break
+
             await self.device.connect()
             await self.device.login()
             if is_keypad_model(self.model_name):

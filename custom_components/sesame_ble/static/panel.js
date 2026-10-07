@@ -1,5 +1,6 @@
 class SesameKeypadPanel extends HTMLElement {
   set hass(hass) {
+    this._hass = hass;
     if (!this._iframe) {
       this.style.display = "block";
       this.style.width = "100%";
@@ -11,11 +12,24 @@ class SesameKeypadPanel extends HTMLElement {
         ></iframe>
       `;
       this._iframe = this.querySelector('iframe');
+      if (this._iframe) {
+        this._iframe.addEventListener('load', () => {
+          this._forwardHass();
+        });
+      }
     }
-    if (this._iframe && this._iframe.contentWindow) {
-      this._iframe.contentWindow.hass = hass;
-      const event = new CustomEvent("hass-changed", { detail: hass });
-      this._iframe.contentWindow.dispatchEvent(event);
+    this._forwardHass();
+  }
+
+  _forwardHass() {
+    if (this._iframe && this._iframe.contentWindow && this._hass) {
+      try {
+        this._iframe.contentWindow.hass = this._hass;
+        const event = new CustomEvent("hass-changed", { detail: this._hass });
+        this._iframe.contentWindow.dispatchEvent(event);
+      } catch (err) {
+        console.error("Error forwarding hass to iframe:", err);
+      }
     }
   }
 }
