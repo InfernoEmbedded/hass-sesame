@@ -136,7 +136,7 @@ class SesameTouchPairLockSelect(SesameTouchBaseSelect):
         try:
             lock_uuid = target_wrapper.adv_data.device_uuid
             secret_key_bytes = bytes.fromhex(target_wrapper.secret_key)
-            async with on_demand_connection(self.wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(self.wrapper, timeout=30.0) as dev:
                 await dev.add_paired_lock(lock_uuid, secret_key_bytes)
                 self.wrapper._handle_status_update(
                     dev, getattr(dev, "mech_status", None)
@@ -206,7 +206,7 @@ class SesameTouchUnpairLockSelect(SesameTouchBaseSelect):
             )
 
         try:
-            async with on_demand_connection(self.wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(self.wrapper, timeout=30.0) as dev:
                 await dev.remove_paired_lock(target_uuid)
                 self.wrapper._handle_status_update(
                     dev, getattr(dev, "mech_status", None)

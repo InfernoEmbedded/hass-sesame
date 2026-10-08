@@ -133,7 +133,7 @@ class SesameDeviceWrapper:
         self._history_flush_task: asyncio.Task | None = None
 
         # Keypads use on-demand connections and must not run persistent reconnect loops
-        reconnect_attempts = 0 if is_keypad_model(model_name) else 5
+        reconnect_attempts = 0  # Disable persistent background reconnection loop to keep BLE adapter available
 
         # Instantiates the correct device type using library factory
         self.device = create_sesame_device(
@@ -274,7 +274,7 @@ class SesameDeviceWrapper:
                 )
 
     @asynccontextmanager
-    async def async_on_demand_connection(self, timeout: float = 10.0):
+    async def async_on_demand_connection(self, timeout: float = 30.0):
         """Context manager for keypads to connect on-demand, execute operations, record battery, and disconnect."""
         was_logged_in = getattr(self.device, "is_logged_in", False)
         try:
@@ -296,12 +296,12 @@ class SesameDeviceWrapper:
 
     async def async_sync_keypad_credentials(self) -> None:
         """Connect on demand with bounded timeout, sync all credentials and battery, then disconnect."""
-        async with self.async_on_demand_connection(timeout=10.0):
+        async with self.async_on_demand_connection(timeout=30.0):
             await self._sync_and_apply_schedules()
 
     async def async_sync_keypad_battery_status(self) -> None:
         """Connect on demand with bounded timeout to update battery status, then disconnect."""
-        async with self.async_on_demand_connection(timeout=10.0):
+        async with self.async_on_demand_connection(timeout=30.0):
             pass
 
     async def _keypad_battery_check_loop(self) -> None:
@@ -476,8 +476,6 @@ class SesameDeviceWrapper:
                 for addr in (address, address.lower(), address.upper()):
                     fresh_ble = bluetooth.async_ble_device_from_address(
                         self.hass, addr, connectable=True
-                    ) or bluetooth.async_ble_device_from_address(
-                        self.hass, addr, connectable=False
                     )
                     if fresh_ble:
                         self.ble_device = fresh_ble
@@ -816,7 +814,7 @@ class SesameDeviceWrapper:
                                     ] = time.time()
                                     try:
                                         async with on_demand_connection(
-                                            keypad_wrapper, timeout=10.0
+                                            keypad_wrapper, timeout=30.0
                                         ) as dev:
                                             await dev.delete_passcode(used_uid)
                                     except Exception as e:
@@ -1268,7 +1266,7 @@ class SesameDeviceWrapper:
 
 
 @asynccontextmanager
-async def on_demand_connection(wrapper: Any, timeout: float = 10.0):
+async def on_demand_connection(wrapper: Any, timeout: float = 30.0):
     """Context manager for on-demand connection to a keypad wrapper or device."""
     from unittest.mock import NonCallableMock
 
@@ -1868,6 +1866,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Check for duplicate passcode name
             for other_uid, other_info in target_wrapper.logical_passcodes.items():
                 if other_info["name"].strip().lower() == name.lower():
+                    if other_info.get("code") == code:
+                        logger.info(
+                            "Passcode '%s' with identical code already registered (idempotent call)",
+                            name,
+                        )
+                        return
                     raise HomeAssistantError(
                         f"A passcode named '{name}' already exists"
                     )
@@ -1894,7 +1898,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     }
                 )
 
-                async with on_demand_connection(target_wrapper, timeout=10.0) as dev:
+                async with on_demand_connection(target_wrapper, timeout=30.0) as dev:
                     # If it's already active physically (e.g. renamed), update name on physical device
                     if getattr(dev, "is_logged_in", False) and uid in getattr(
                         dev, "passcodes", {}
@@ -1912,7 +1916,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         dev, getattr(dev, "mech_status", None)
                     )
             except Exception as ex:
-                raise HomeAssistantError(f"Failed to add passcode: {ex}") from ex
+                logger.warning(
+                    "Passcode '%s' was added logically but failed to push immediately to physical device (%s); sync will retry on reconnect",
+                    name,
+                    ex,
+                )
 
         async def handle_delete_passcode(call: ServiceCall) -> None:
             """Service to delete a passcode from a Sesame Touch."""
@@ -1955,7 +1963,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             # 2. Connect on demand and delete from physical device
             try:
-                async with on_demand_connection(target_wrapper, timeout=10.0) as dev:
+                async with on_demand_connection(target_wrapper, timeout=30.0) as dev:
                     if getattr(dev, "is_logged_in", False):
                         await dev.delete_passcode(target_code_or_id)
                         try:
@@ -2013,7 +2021,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
 
             try:
-                async with on_demand_connection(target_wrapper, timeout=10.0) as dev:
+                async with on_demand_connection(target_wrapper, timeout=30.0) as dev:
                     if getattr(dev, "is_logged_in", False):
                         await dev.update_passcode_name(target_code_or_id, name)
                         try:
@@ -2044,7 +2052,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 lock_uuid = lock_wrapper.adv_data.device_uuid
                 secret_key_bytes = bytes.fromhex(lock_wrapper.secret_key)
 
-                async with on_demand_connection(target_wrapper, timeout=10.0) as dev:
+                async with on_demand_connection(target_wrapper, timeout=30.0) as dev:
                     await dev.add_paired_lock(lock_uuid, secret_key_bytes)
                     target_wrapper._handle_status_update(
                         dev, getattr(dev, "mech_status", None)
@@ -2063,7 +2071,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 from uuid import UUID
 
                 lock_uuid = UUID(lock_uuid_str)
-                async with on_demand_connection(target_wrapper, timeout=10.0) as dev:
+                async with on_demand_connection(target_wrapper, timeout=30.0) as dev:
                     await dev.remove_paired_lock(lock_uuid)
                     target_wrapper._handle_status_update(
                         dev, getattr(dev, "mech_status", None)

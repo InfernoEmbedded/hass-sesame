@@ -209,7 +209,7 @@ class NordicSecureDfuClient:
         self,
         op_code: int,
         params: bytes = b"",
-        timeout: float = 10.0,
+        timeout: float = 30.0,
     ) -> bytes:
         """Sends a request to the Control Point characteristic and awaits response notification."""
         async with self._notification_lock:
@@ -227,7 +227,7 @@ class NordicSecureDfuClient:
                 self._pending_future = None
                 self._pending_response_op = None
 
-    async def _wait_for_prn(self, timeout: float = 10.0) -> tuple[int, int]:
+    async def _wait_for_prn(self, timeout: float = 30.0) -> tuple[int, int]:
         """Waits for Packet Receipt Notification (PRN) from device."""
         return await asyncio.wait_for(self._prn_queue.get(), timeout=timeout)
 
@@ -265,7 +265,7 @@ class NordicSecureDfuClient:
         offset, crc = struct.unpack("<II", resp[3:11])
         return offset, crc
 
-    async def execute(self, timeout: float = 10.0) -> None:
+    async def execute(self, timeout: float = 30.0) -> None:
         """Sends Execute command (OpCode 4)."""
         logger.debug("Executing object")
         await self._send_op_code(OP_EXECUTE, timeout=timeout)

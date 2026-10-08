@@ -332,7 +332,7 @@ class SesamePasscodesView(HomeAssistantView):
             )
 
             # Connect on-demand to update physical device
-            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(wrapper, timeout=30.0) as dev:
                 if old_uid and old_uid != uid:
                     if dev and getattr(dev, "is_logged_in", False):
                         try:
@@ -407,7 +407,7 @@ class SesamePasscodesView(HomeAssistantView):
                     }
                 )
 
-            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(wrapper, timeout=30.0) as dev:
                 if dev and getattr(dev, "is_logged_in", False):
                     try:
                         await dev.delete_passcode(uid)
@@ -480,7 +480,7 @@ class SesameCardsView(HomeAssistantView):
                         "fingerprints": wrapper.logical_fingerprints,
                     }
                 )
-                async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                async with on_demand_connection(wrapper, timeout=30.0) as dev:
                     if dev and getattr(dev, "is_logged_in", False):
                         try:
                             await dev.update_card_name(uid, name)
@@ -530,7 +530,7 @@ class SesameCardsView(HomeAssistantView):
                     }
                 )
 
-            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(wrapper, timeout=30.0) as dev:
                 if dev and getattr(dev, "is_logged_in", False):
                     try:
                         await dev.delete_card(uid)
@@ -598,7 +598,7 @@ class SesameFingerprintsView(HomeAssistantView):
                         "fingerprints": wrapper.logical_fingerprints,
                     }
                 )
-                async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                async with on_demand_connection(wrapper, timeout=30.0) as dev:
                     if dev and getattr(dev, "is_logged_in", False):
                         try:
                             await dev.update_fingerprint_name(uid, name)
@@ -628,7 +628,7 @@ class SesameFingerprintsView(HomeAssistantView):
                         "fingerprints": wrapper.logical_fingerprints,
                     }
                 )
-                async with on_demand_connection(wrapper, timeout=10.0) as dev:
+                async with on_demand_connection(wrapper, timeout=30.0) as dev:
                     if dev and getattr(dev, "is_logged_in", False):
                         try:
                             await dev.update_fingerprint_name(uid, name)
@@ -687,7 +687,7 @@ class SesameFingerprintsView(HomeAssistantView):
                     }
                 )
 
-            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(wrapper, timeout=30.0) as dev:
                 if dev and getattr(dev, "is_logged_in", False):
                     try:
                         await dev.delete_fingerprint(uid)
@@ -969,7 +969,7 @@ class SesameCardsRegisterView(HomeAssistantView):
         wrapper = self.hass.data[DOMAIN][entry_id]
 
         try:
-            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(wrapper, timeout=30.0) as dev:
                 if action == "start":
                     dev.scanned_card = None
                     logger.info(
@@ -1045,7 +1045,7 @@ class SesameFingerprintsRegisterView(HomeAssistantView):
         wrapper = self.hass.data[DOMAIN][entry_id]
 
         try:
-            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(wrapper, timeout=30.0) as dev:
                 if action == "start":
                     dev.scanned_fingerprint = None
                     logger.info(
@@ -1119,7 +1119,7 @@ class SesamePasscodesRegisterView(HomeAssistantView):
         wrapper = self.hass.data[DOMAIN][entry_id]
 
         try:
-            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(wrapper, timeout=30.0) as dev:
                 if action == "start":
                     dev.scanned_passcode = None
                     logger.info(
@@ -1195,7 +1195,7 @@ class SesameCardsAddView(HomeAssistantView):
                 )
 
         try:
-            async with on_demand_connection(wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(wrapper, timeout=30.0) as dev:
                 # 1. Add physically via BLE
                 await dev.add_card(uid, name, card_type)
 
@@ -1362,7 +1362,7 @@ class SesameKeypadPairView(HomeAssistantView):
         try:
             lock_uuid = lock_wrapper.adv_data.device_uuid
             secret_key_bytes = bytes.fromhex(lock_wrapper.secret_key)
-            async with on_demand_connection(keypad_wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(keypad_wrapper, timeout=30.0) as dev:
                 await dev.add_paired_lock(lock_uuid, secret_key_bytes)
                 keypad_wrapper._handle_status_update(
                     dev, getattr(dev, "mech_status", None)
@@ -1403,7 +1403,7 @@ class SesameKeypadUnpairView(HomeAssistantView):
         try:
             from uuid import UUID
 
-            async with on_demand_connection(keypad_wrapper, timeout=10.0) as dev:
+            async with on_demand_connection(keypad_wrapper, timeout=30.0) as dev:
                 await dev.remove_paired_lock(UUID(lock_uuid))
                 keypad_wrapper._handle_status_update(
                     dev, getattr(dev, "mech_status", None)
