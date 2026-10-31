@@ -331,3 +331,43 @@ async def test_keypad_does_not_trigger_reactive_history_flush():
     wrapper._handle_status_update(mock_keypad, mock_status)
     assert wrapper._history_flush_task is None
     wrapper.fetch_and_flush_history.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_keypad_schedule_sync_detection():
+    """Verify _keypad_needs_schedule_sync detects schedule boundary transitions without BLE traffic."""
+    import datetime
+
+    wrapper = MagicMock(spec=SesameDeviceWrapper)
+    wrapper._keypad_synced_once = True
+    wrapper.recently_deleted_passcodes = {}
+    wrapper.device = MagicMock()
+    wrapper.device.passcodes = {
+        "010401050804": {"name": "Admin", "code": "141584"},
+    }
+    wrapper.logical_passcodes = {
+        "010401050804": {"name": "Admin", "code": "141584", "start": "", "end": ""},
+        "030001050607": {
+            "name": "Guest",
+            "code": "301567",
+            "start": "2026-10-29 14:50",
+            "end": "2026-11-01 10:30",
+        },
+    }
+
+    # Before guest start time: guest code is not on physical device -> no sync needed
+    before_start = datetime.datetime(2026, 10, 29, 14, 0)
+    assert SesameDeviceWrapper._keypad_needs_schedule_sync(wrapper, before_start) is False
+
+    # After guest start time: guest code should be active, but not in device.passcodes -> sync needed
+    after_start = datetime.datetime(2026, 10, 29, 15, 0)
+    assert SesameDeviceWrapper._keypad_needs_schedule_sync(wrapper, after_start) is True
+
+    # Once pushed to physical device -> no sync needed during stay
+    wrapper.device.passcodes["030001050607"] = {"name": "Guest", "code": "301567"}
+    assert SesameDeviceWrapper._keypad_needs_schedule_sync(wrapper, after_start) is False
+
+    # After guest checkout end time: guest code still in device.passcodes -> sync needed to remove
+    after_end = datetime.datetime(2026, 11, 1, 10, 35)
+    assert SesameDeviceWrapper._keypad_needs_schedule_sync(wrapper, after_end) is True
+

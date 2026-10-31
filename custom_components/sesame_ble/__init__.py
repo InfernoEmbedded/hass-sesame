@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import inspect
 import logging
 import datetime
+import time
 from typing import Any, Callable
 
 from homeassistant.config_entries import ConfigEntry
@@ -74,6 +75,53 @@ def parse_datetime(dt_str: str) -> datetime.datetime | None:
     return None
 
 
+def should_passcode_be_active(
+    logical_info: dict[str, Any], now: datetime.datetime | None = None
+) -> bool:
+    """Return whether a logical passcode schedule should currently be active on the keypad."""
+    if now is None:
+        now = datetime.datetime.now()
+
+    start_dt = parse_datetime(logical_info.get("start", ""))
+    end_dt = parse_datetime(logical_info.get("end", ""))
+
+    should_be_active = True
+    if start_dt and now < start_dt:
+        should_be_active = False
+    if end_dt and now >= end_dt:
+        should_be_active = False
+
+    days_list = logical_info.get("days")
+    if should_be_active and days_list:
+        try:
+            int_days = [int(d) for d in days_list]
+            if now.weekday() not in int_days:
+                should_be_active = False
+        except (ValueError, TypeError):
+            pass
+
+    time_start_str = str(logical_info.get("time_start", "")).strip()
+    time_end_str = str(logical_info.get("time_end", "")).strip()
+    if should_be_active and (time_start_str or time_end_str):
+        current_time = now.time()
+        if time_start_str:
+            try:
+                h, m = map(int, time_start_str.split(":"))
+                if current_time < datetime.time(h, m):
+                    should_be_active = False
+            except (ValueError, TypeError):
+                pass
+        if time_end_str:
+            try:
+                h, m = map(int, time_end_str.split(":"))
+                if current_time >= datetime.time(h, m):
+                    should_be_active = False
+            except (ValueError, TypeError):
+                pass
+
+    return should_be_active
+
+
 def get_supported_auth_methods(model_name: str | None) -> list[str]:
     """Returns list of supported auth methods ('passcode', 'card', 'fingerprint', 'face', 'palm') for a given model."""
     if not model_name or not is_keypad_model(model_name):
@@ -131,9 +179,12 @@ class SesameDeviceWrapper:
         self._unsub_advertisement: Callable[[], None] | None = None
         self._unsub_unavailable: Callable[[], None] | None = None
         self._history_flush_task: asyncio.Task | None = None
+        self._keypad_synced_once: bool = False
+        self._last_keypad_sync_ts: float = 0.0
 
-        # Keypads use on-demand connections and must not run persistent reconnect loops
-        reconnect_attempts = 0  # Disable persistent background reconnection loop to keep BLE adapter available
+        # Keypads use on-demand connections and must not run persistent reconnect loops.
+        # Locks maintain persistent connections and auto-reconnect on disconnect.
+        reconnect_attempts = 0 if is_keypad_model(self.model_name) else 5
 
         # Instantiates the correct device type using library factory
         self.device = create_sesame_device(
@@ -304,24 +355,50 @@ class SesameDeviceWrapper:
         async with self.async_on_demand_connection(timeout=30.0):
             pass
 
+    def _keypad_needs_schedule_sync(
+        self, now: datetime.datetime | None = None
+    ) -> bool:
+        """Check in memory whether the keypad needs an on-demand BLE sync for schedules or initial state."""
+        if not getattr(self, "_keypad_synced_once", False):
+            return True
+        if now is None:
+            now = datetime.datetime.now()
+        physical_passcodes = getattr(self.device, "passcodes", None) or {}
+        for uid, logical_info in list(self.logical_passcodes.items()):
+            expected_active = should_passcode_be_active(logical_info, now)
+            is_active = uid in physical_passcodes
+            if expected_active != is_active:
+                return True
+        for uid in getattr(self, "recently_deleted_passcodes", {}):
+            if uid in physical_passcodes:
+                return True
+        return False
+
     async def _keypad_battery_check_loop(self) -> None:
-        """Periodic battery check loop for keypads (every 24 hours)."""
+        """Periodic schedule and battery check loop for keypads.
+
+        Evaluates passcode schedules in memory every 60 seconds without BLE traffic,
+        and connects on-demand only when a schedule boundary is crossed, initial sync
+        is pending, or 24 hours have elapsed for a battery check.
+        """
         while True:
-            await asyncio.sleep(24 * 3600)
+            await asyncio.sleep(60)
             try:
-                await self.async_sync_keypad_battery_status()
+                now_ts = time.time()
+                needs_schedule_sync = self._keypad_needs_schedule_sync()
+                last_sync_ts = getattr(self, "_last_keypad_sync_ts", 0.0)
+                needs_battery_sync = (now_ts - last_sync_ts) >= (24 * 3600)
+                if needs_schedule_sync or needs_battery_sync:
+                    await self.async_sync_keypad_credentials()
             except Exception as err:
                 logger.debug(
-                    "Periodic keypad battery check error for %s: %s",
+                    "Periodic keypad schedule/battery check error for %s: %s",
                     getattr(self.ble_device, "address", "keypad"),
                     err,
                 )
 
     def async_track_advertisements(self) -> None:
-        """Start tracking BLE advertisements for keypad availability."""
-        if not is_keypad_model(self.model_name):
-            return
-
+        """Start tracking BLE advertisements for device availability and reconnection."""
         address = getattr(getattr(self, "ble_device", None), "address", None)
         if not address:
             return
@@ -343,6 +420,25 @@ class SesameDeviceWrapper:
                     self.ble_device = service_info.device
                     if hasattr(self.device, "set_ble_device"):
                         self.device.set_ble_device(service_info.device)
+
+                # For locks: if disconnected and not actively reconnecting, trigger background connect
+                if not is_keypad_model(self.model_name):
+                    reconnect_task = getattr(self.device, "_reconnect_task", None)
+                    is_reconnecting = (
+                        reconnect_task is not None and not reconnect_task.done()
+                    )
+                    if (
+                        not getattr(self.device, "is_logged_in", False)
+                        and not is_reconnecting
+                    ):
+                        now = time.time()
+                        if (
+                            not getattr(self, "_connect_in_progress", False)
+                            and (now - getattr(self, "_last_connect_attempt", 0)) > 15.0
+                        ):
+                            self._last_connect_attempt = now
+                            asyncio.create_task(self._async_connect_background())
+
                 for listener in list(getattr(self, "update_listeners", [])):
                     try:
                         listener()
@@ -548,6 +644,9 @@ class SesameDeviceWrapper:
         """Connect in background and start reconnect loop if it fails."""
         if is_keypad_model(self.model_name):
             return
+        if getattr(self, "_connect_in_progress", False):
+            return
+        self._connect_in_progress = True
         try:
             await self.async_connect()
             if not is_keypad_model(self.model_name):
@@ -570,6 +669,8 @@ class SesameDeviceWrapper:
                 self.device._reconnect_task = asyncio.create_task(
                     self.device._auto_reconnect()
                 )
+        finally:
+            self._connect_in_progress = False
 
     async def _scheduler_loop(self) -> None:
         """Background fallback loop to fetch lock history periodically."""
@@ -988,6 +1089,12 @@ class SesameDeviceWrapper:
                                 self.recently_deleted_passcodes[used_uid] = now_ts
                                 try:
                                     await self.device.delete_passcode(used_uid)
+                                    if isinstance(physical_passcodes, dict):
+                                        physical_passcodes.pop(used_uid, None)
+                                        if hasattr(self.device, "passcodes_count"):
+                                            self.device.passcodes_count = len(
+                                                physical_passcodes
+                                            )
                                 except Exception as e:
                                     logger.error(
                                         "Failed to delete used OTP passcode %s from physical device: %s",
@@ -1006,6 +1113,10 @@ class SesameDeviceWrapper:
                     try:
                         await self.device.delete_passcode(uid)
                         self.recently_deleted_passcodes[uid] = time.time()
+                        if isinstance(physical_passcodes, dict):
+                            physical_passcodes.pop(uid, None)
+                            if hasattr(self.device, "passcodes_count"):
+                                self.device.passcodes_count = len(physical_passcodes)
                         changed = True
                     except Exception as e:
                         logger.warning(
@@ -1166,6 +1277,25 @@ class SesameDeviceWrapper:
             # 2. Evaluate schedules via virtualization or hardware implementation
             if await self.device.apply_passcode_schedules(self.logical_passcodes):
                 changed = True
+                if isinstance(physical_passcodes, dict):
+                    for uid, logical_info in list(self.logical_passcodes.items()):
+                        if should_passcode_be_active(logical_info, now):
+                            if uid not in physical_passcodes:
+                                physical_passcodes[uid] = {
+                                    "name": str(logical_info.get("name", "")),
+                                    "code": str(logical_info.get("code", "")),
+                                    "type": 0,
+                                }
+                        else:
+                            physical_passcodes.pop(uid, None)
+                    if hasattr(self.device, "passcodes_count"):
+                        self.device.passcodes_count = len(physical_passcodes)
+
+            try:
+                self._keypad_synced_once = True
+                self._last_keypad_sync_ts = time.time()
+            except AttributeError:
+                pass
 
             if changed:
                 await self.store.async_save(
@@ -1681,6 +1811,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         # Run background scheduler for locks (history polling)
         wrapper.scheduler_task = asyncio.create_task(wrapper._scheduler_loop())
+        wrapper.async_track_advertisements()
         try:
             # Connect to lock in a background task so Home Assistant setup doesn't block
             asyncio.create_task(wrapper._async_connect_background())
