@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable, Coroutine
+import copy
 from dataclasses import dataclass
 import logging
 from typing import Any
@@ -128,9 +129,9 @@ SENSOR_DESC_PASSCODE = SesameSensorDescription(
         )
     ),
     attrs_fn=lambda w: (
-        {"passcodes": getattr(w, "logical_passcodes", {})}
+        {"passcodes": copy.deepcopy(getattr(w, "logical_passcodes", {}))}
         if is_keypad_model(w.model_name)
-        else {"passcodes": getattr(w.device, "passcodes", {})}
+        else {"passcodes": copy.deepcopy(getattr(w.device, "passcodes", {}))}
     ),
     init_task_fn=_fetch_passcodes_on_start,
 )

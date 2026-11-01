@@ -371,3 +371,59 @@ async def test_keypad_schedule_sync_detection():
     after_end = datetime.datetime(2026, 11, 1, 10, 35)
     assert SesameDeviceWrapper._keypad_needs_schedule_sync(wrapper, after_end) is True
 
+
+@pytest.mark.asyncio
+async def test_keypad_sync_not_blocked_by_auto_reconnect_paused():
+    """Verify _sync_and_apply_schedules runs even after device.disconnect() sets _auto_reconnect_paused = True."""
+    from pysesame_ble import BaseKeypad
+
+    hass = MagicMock()
+    hass.data = {DOMAIN: {}}
+
+    wrapper = MagicMock(spec=SesameDeviceWrapper)
+    wrapper.hass = hass
+    wrapper.model_name = "SESAME_TOUCH_2_PRO"
+    wrapper.is_updating = False
+    wrapper.update_listeners = []
+    wrapper.recently_deleted_passcodes = {}
+    wrapper.recently_deleted_cards = {}
+    wrapper.recently_deleted_fingerprints = {}
+    wrapper.store = MagicMock()
+    wrapper.store.async_save = AsyncMock()
+    wrapper.logical_passcodes = {
+        "010108080907": {
+            "name": "Hamzah M Shamsudin - HMDSJDJ2QJ",
+            "code": "118897",
+            "start": "",
+            "end": "",
+        }
+    }
+    wrapper.logical_cards = {}
+    wrapper.logical_fingerprints = {}
+    wrapper._sync_lock = asyncio.Lock()
+    wrapper._handle_status_update = MagicMock()
+
+    mock_dev = MagicMock(spec=BaseKeypad)
+    mock_dev.is_logged_in = True
+    mock_dev.is_connected = True
+    # Simulate pysesame_ble disconnect() having set _auto_reconnect_paused = True on previous on-demand connection
+    mock_dev._auto_reconnect_paused = True
+    mock_dev.get_passcodes = AsyncMock()
+    mock_dev.get_cards = AsyncMock()
+    mock_dev.get_fingerprints = AsyncMock()
+    mock_dev.get_faces = AsyncMock()
+    mock_dev.get_palms = AsyncMock()
+    mock_dev.apply_passcode_schedules = AsyncMock(return_value=True)
+    mock_dev.passcodes = {}
+    mock_dev.cards = {}
+    mock_dev.fingerprints = {}
+    mock_dev.mech_status = MagicMock()
+    wrapper.device = mock_dev
+
+    await SesameDeviceWrapper._sync_and_apply_schedules(wrapper)
+
+    mock_dev.get_passcodes.assert_awaited_once()
+    mock_dev.apply_passcode_schedules.assert_awaited_once_with(wrapper.logical_passcodes)
+    assert "010108080907" in mock_dev.passcodes
+
+

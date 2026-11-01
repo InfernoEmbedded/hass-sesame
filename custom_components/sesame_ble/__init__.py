@@ -579,6 +579,10 @@ class SesameDeviceWrapper:
                             self.device.set_ble_device(fresh_ble)
                         break
 
+            if hasattr(self.device, "resume_auto_reconnect") and not getattr(
+                self, "is_updating", False
+            ):
+                self.device.resume_auto_reconnect()
             await self.device.connect()
             await self.device.login()
             if is_keypad_model(self.model_name):
@@ -663,6 +667,10 @@ class SesameDeviceWrapper:
                 await self.device.disconnect()
             except Exception:
                 pass
+            if hasattr(self.device, "resume_auto_reconnect") and not getattr(
+                self, "is_updating", False
+            ):
+                self.device.resume_auto_reconnect()
             if self.device._reconnect_limit and (
                 not self.device._reconnect_task or self.device._reconnect_task.done()
             ):
@@ -977,10 +985,8 @@ class SesameDeviceWrapper:
         """Sync with physical keypad and apply passcode schedules."""
         if not isinstance(self.device, BaseKeypad):
             return
-        if (
-            getattr(self, "is_updating", False)
-            or not getattr(self.device, "is_logged_in", False)
-            or getattr(self.device, "_auto_reconnect_paused", False)
+        if getattr(self, "is_updating", False) or not getattr(
+            self.device, "is_logged_in", False
         ):
             return
 
