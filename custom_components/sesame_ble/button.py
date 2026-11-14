@@ -1,5 +1,7 @@
 """Platform for Sesame BLE button integration."""
 
+from __future__ import annotations
+
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 import logging
@@ -69,6 +71,32 @@ async def _async_press_calibrate_magnet(wrapper: SesameDeviceWrapper) -> None:
         raise HomeAssistantError(f"Failed to calibrate magnet: {err}") from err
 
 
+async def _async_press_restart(wrapper: SesameDeviceWrapper) -> None:
+    if is_keypad_model(wrapper.model_name):
+        async with wrapper.async_on_demand_connection(timeout=30.0):
+            if not getattr(wrapper.device, "is_logged_in", False):
+                raise HomeAssistantError("Keypad is not connected/logged in")
+            try:
+                await wrapper.device.reboot()
+            except Exception as err:
+                raise HomeAssistantError(f"Failed to restart keypad: {err}") from err
+    else:
+        if not wrapper.device.is_logged_in:
+            raise HomeAssistantError("Device is not connected/logged in")
+        try:
+            await wrapper.device.reboot()
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to restart device: {err}") from err
+
+
+BUTTON_DESC_RESTART = SesameButtonDescription(
+    key="restart",
+    name="Restart",
+    icon="mdi:restart",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    press_fn=_async_press_restart,
+)
+
 BUTTON_DESCRIPTIONS: tuple[SesameButtonDescription, ...] = (
     SesameButtonDescription(
         key="set_locked_position",
@@ -102,16 +130,15 @@ async def async_setup_entry(
     """Set up button entities for Candy House Sesame BLE device."""
     wrapper: SesameDeviceWrapper = hass.data[DOMAIN][entry.entry_id]
 
-    # Keypads and Touch devices do not have lock positions to calibrate
-    if is_keypad_model(wrapper.model_name):
-        logger.debug(
-            "Skipping button setup for Sesame Touch device %s", entry.unique_id
-        )
-        return
+    entities: list[SesameButton] = [SesameButton(wrapper, BUTTON_DESC_RESTART)]
 
-    async_add_entities(
-        [SesameButton(wrapper, description) for description in BUTTON_DESCRIPTIONS]
-    )
+    # Keypads and Touch devices do not have lock positions to calibrate
+    if not is_keypad_model(wrapper.model_name):
+        entities.extend(
+            [SesameButton(wrapper, description) for description in BUTTON_DESCRIPTIONS]
+        )
+
+    async_add_entities(entities)
 
 
 class SesameButton(ButtonEntity):
@@ -130,7 +157,11 @@ class SesameButton(ButtonEntity):
 
     @property
     def available(self) -> bool:
-        """Return true if the device is connected and logged in."""
+        """Return true if the device is connected and logged in, or if keypad can connect on-demand."""
+        if self.entity_description.key == "restart" and is_keypad_model(
+            self.wrapper.model_name
+        ):
+            return True
         if is_keypad_model(self.wrapper.model_name):
             return self.wrapper.is_available
         return self.wrapper.device.is_logged_in

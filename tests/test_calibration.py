@@ -60,21 +60,28 @@ async def test_calibration_buttons_setup_and_press(mock_bluetooth) -> None:
 
     async_add_entities.assert_called_once()
     buttons = async_add_entities.call_args[0][0]
-    assert len(buttons) == 3
+    assert len(buttons) == 4
 
     locked_btn = next(b for b in buttons if b.unique_id == "test_mac_calibration_set_locked_position")
     unlocked_btn = next(b for b in buttons if b.unique_id == "test_mac_calibration_set_unlocked_position")
     calibrate_btn = next(b for b in buttons if b.unique_id == "test_mac_calibration_calibrate_magnet")
+    restart_btn = next(b for b in buttons if b.unique_id == "test_mac_calibration_restart")
 
     assert locked_btn.name == "Set Locked Position"
     assert unlocked_btn.name == "Set Unlocked Position"
     assert calibrate_btn.name == "Calibrate Magnet"
+    assert restart_btn.name == "Restart"
 
     # Test Calibrate Magnet Button Press
     wrapper.device.is_logged_in = True
     wrapper.device.calibrate_magnet = AsyncMock()
     await calibrate_btn.async_press()
     wrapper.device.calibrate_magnet.assert_called_once()
+
+    # Test Restart Button Press
+    wrapper.device.reboot = AsyncMock()
+    await restart_btn.async_press()
+    wrapper.device.reboot.assert_called_once()
 
     # 3. Test Button Availability
     wrapper.device.is_logged_in = False
@@ -184,8 +191,8 @@ async def test_lock_entity_calibration_attributes(mock_bluetooth) -> None:
 
 @pytest.mark.asyncio
 @patch("sesame_ble.bluetooth")
-async def test_touch_device_skips_buttons(mock_bluetooth) -> None:
-    """Verify button platform setup is skipped on Touch/Keypad devices."""
+async def test_touch_device_buttons(mock_bluetooth) -> None:
+    """Verify Touch/Keypad devices get diagnostic Restart button but skip calibration buttons."""
     hass = MagicMock()
     hass.data = {}
     hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
@@ -197,6 +204,7 @@ async def test_touch_device_skips_buttons(mock_bluetooth) -> None:
 
     entry = MagicMock()
     entry.entry_id = "test_entry_touch"
+    entry.unique_id = "test_mac_touch"
     entry.data = {
         "mac_address": "AA:BB:CC:DD:EE:FF",
         CONF_SECRET_KEY: "0123456789abcdef0123456789abcdef",
@@ -208,7 +216,11 @@ async def test_touch_device_skips_buttons(mock_bluetooth) -> None:
     async_add_entities = MagicMock()
     await sesame_ble.button.async_setup_entry(hass, entry, async_add_entities)
 
-    async_add_entities.assert_not_called()
+    async_add_entities.assert_called_once()
+    buttons = async_add_entities.call_args[0][0]
+    assert len(buttons) == 1
+    assert buttons[0].unique_id == "test_mac_touch_restart"
+    assert buttons[0].available is True
 
 
 @pytest.mark.asyncio

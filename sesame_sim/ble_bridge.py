@@ -82,6 +82,17 @@ class VirtualBleakClient(BleakClient):
         uuid_str = str(char_specifier).lower()
         self._notify_callbacks.pop(uuid_str, None)
 
+    async def read_gatt_char(
+        self,
+        char_specifier: str | BleakGATTCharacteristic,
+        **kwargs: Any,
+    ) -> bytearray:
+        uuid_str = str(char_specifier).lower()
+        if self._device and (uuid_str == RX_CHAR_UUID.lower() or "16860003" in uuid_str):
+            if hasattr(self._device, "current_token"):
+                return bytearray(bytes([0x03, 0x08, 0x0E]) + self._device.current_token)
+        return bytearray()
+
     async def write_gatt_char(
         self,
         char_specifier: str | BleakGATTCharacteristic,
