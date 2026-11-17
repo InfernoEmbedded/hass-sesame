@@ -410,10 +410,10 @@ class SesameDeviceWrapper:
                 )
 
                 matcher = BluetoothCallbackMatcher(
-                    address=address.lower(), connectable=False
+                    address=address.upper(), connectable=False
                 )
             except (ImportError, TypeError):
-                matcher = {"address": address.lower(), "connectable": False}
+                matcher = {"address": address.upper(), "connectable": False}
 
             def _async_on_advertisement(service_info, change):
                 if getattr(service_info, "device", None):
